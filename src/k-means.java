@@ -9,7 +9,14 @@ import java.lang.Math;
 public class KMeans {
 
 	public static void main(String[]args) throws IOException 
-	{
+	{	
+		Scanner dt = new Scanner(System.in);
+		System.out.print("Enter the name of the CSV file: ");
+		String fileName = dt.nextLine();
+		
+		double dataset[][]= importcsv(fileName+".csv");
+		//double dataset[][]= importcsv("C:\\\\Users\\\\kings\\\\Desktop\\\\DataSet11.csv");  
+
 		System.out.println("Choose the number of clusters (>=2) :");
 
 		Scanner in = new Scanner(System.in);
@@ -19,7 +26,7 @@ public class KMeans {
 
 		int MaxIt=in.nextInt();
 
-		double dataset[][]= importcsv("C:\\\\Users\\\\kings\\\\Desktop\\\\DataSet11.csv");
+		
 
 		ArrayList<double[]> cluster = new ArrayList<double[]>();
 		ArrayList<ArrayList<double[]>> masterclusters  = new ArrayList<ArrayList<double[]>>();
@@ -56,7 +63,8 @@ public class KMeans {
 		}
 
 		in.close();
-
+		dt.close();
+		
 		int clstrno;
 		double tempdst;
 
@@ -203,7 +211,7 @@ public class KMeans {
 	{
 		double centroid[] = new double[closestpts[0].length];	
 
-		for (int j=1; j<closestpts[0].length; j++) { //skipping first column since first column is considered an identifier
+		for (int j=1; j<closestpts[0].length; j++) { //skipping first column because its an id
 
 			double temp=0; 
 
