@@ -1,3 +1,19 @@
+// ============================================================================
+//   Copyright 2019 Kingshuk Kundu
+//
+//   Licensed under the Apache License, Version 2.0 (the "License");
+//   you may not use this file except in compliance with the License.
+//   You may obtain a copy of the License at
+//
+//       http://www.apache.org/licenses/LICENSE-2.0
+//
+//   Unless required by applicable law or agreed to in writing, software
+//   distributed under the License is distributed on an "AS IS" BASIS,
+//   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//   See the License for the specific language governing permissions and
+//   limitations under the License.
+// ============================================================================
+
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.FileWriter;
@@ -5,6 +21,13 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Scanner;
 import java.lang.Math;
+
+/**
+ * Encapsulates a K-Means algorithm.  Exports the clustered dataset
+ * based on k-means in a separate excel file and prints the execution time 
+ * and number of iterations on the console
+ * @author Kingshuk Kundu
+ */
 
 public class KMeans {
 
@@ -15,7 +38,7 @@ public class KMeans {
 		String fileName = dt.nextLine();
 		
 		double dataset[][]= importcsv(fileName+".csv");
-		//double dataset[][]= importcsv("C:\\\\Users\\\\kings\\\\Desktop\\\\DataSet11.csv");  
+		//double dataset[][]= importcsv("C:\\\\Users\\\\[user_name]\\\\[location]\\\\[file_name].csv");  
 
 		System.out.println("Choose the number of clusters (>=2) :");
 
