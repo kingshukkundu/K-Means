@@ -365,7 +365,7 @@ public class KMeans {
 			}
 
 			csvWriter.append("\n\n\n\n\n");	
-			csvWriter.append(++cluster +",");
+			cluster++;
 			
 		}
 
