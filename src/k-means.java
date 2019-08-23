@@ -94,9 +94,9 @@ public class KMeans {
 		for(int c=0;c<dataset.length;c++) {
 
 			clstrno=0;
-			tempdst=999999999;
+			tempdst=CalcDist(dataset[c],centroid.get(0));
 
-			for(int d=0;d<centroid.size();d++) {
+			for(int d=1;d<centroid.size();d++) {
 
 				double temp= CalcDist(dataset[c],centroid.get(d));
 
@@ -131,7 +131,7 @@ public class KMeans {
 					clstrno=0;
 					tempdst=CalcDist(masterclusters.get(g).get(h),centroid.get(0));
 
-					for(int d=0;d<centroid.size();d++) {
+					for(int d=1;d<centroid.size();d++) {
 
 						double temp= CalcDist(masterclusters.get(g).get(h),centroid.get(d));
 
