@@ -94,7 +94,7 @@ public class KMeans {
 		for(int c=0;c<dataset.length;c++) {
 
 			clstrno=0;
-			tempdst=CalcDist(dataset[c],centroid.get(0));
+			tempdst=999999999;
 
 			for(int d=0;d<centroid.size();d++) {
 
@@ -148,12 +148,14 @@ public class KMeans {
 					masterclusters.get(g).remove(h);
 					masterclusters.get(clstrno).add(store);
 
+					}
+				
 				}
 
-				for(int e=0; e<centroid.size();e++) {
+			for(int e=0; e<centroid.size();e++) {
 
-					centroid.set(e,CalcNewCentroid(ConvToArr(masterclusters.get(e))));
-				}
+				centroid.set(e,CalcNewCentroid(ConvToArr(masterclusters.get(e))));
+				
 
 			}
 
