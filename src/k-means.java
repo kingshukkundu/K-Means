@@ -53,19 +53,22 @@ public class KMeans {
 
 		ArrayList<double[]> cluster = new ArrayList<double[]>();
 		ArrayList<ArrayList<double[]>> masterclusters  = new ArrayList<ArrayList<double[]>>();
-		ArrayList<ArrayList<double[]>> oldcluster =  new ArrayList<ArrayList<double[]>>();
+//Old		ArrayList<ArrayList<double[]>> oldcluster =  new ArrayList<ArrayList<double[]>>();
 
 		for (int a=0; a<NumOfClstr; a++) {
 
 			cluster= new ArrayList<double[]>(cluster);
 			masterclusters.add(cluster);
-
+			
+/**** Do not use unless you want to use the old check equality method ****
 			cluster= new ArrayList<double[]>(cluster);
 			oldcluster.add(cluster);
-
+*************************************************************************/
 		}
 
 		ArrayList<double[]> centroid=new ArrayList<double[]>();
+		ArrayList<double[]> oldcentroids = new ArrayList<double[]>();
+		
 		System.out.println("\nPlease pick a number between 1 and "+dataset.length+"\n\n");
 
 		for(int b=1; b<NumOfClstr+1; b++) {
@@ -76,7 +79,8 @@ public class KMeans {
 			int input = sc.nextInt(); 
 
 			centroid.add(dataset[input-1]);
-
+			oldcentroids.add(dataset[input - 1]);
+			
 			if(b==NumOfClstr) {
 
 				sc.close();
@@ -118,10 +122,13 @@ public class KMeans {
 
 		}
 
-		oldcluster=resetcluster(oldcluster,masterclusters);
+// Old		oldcluster=resetcluster(oldcluster,masterclusters);
+		oldcentroids = resetcluster(oldcentroids, centroid);
+		
 		int iterations=0;
 		long startTime = System.nanoTime();
-
+		int rand = 0;
+		
 		while(true) {
 
 			for (int g=0; g<masterclusters.size();g++) {
@@ -161,12 +168,29 @@ public class KMeans {
 
 			print2D(ConvToArr(centroid));
 			iterations++;
-
+/* Old
 			if(iterations >= MaxIt || checkEquality(oldcluster, masterclusters))
 				break;
 			else
 				oldcluster=resetcluster(oldcluster, masterclusters);
-
+*/
+			if (iterations >= MaxIt)
+				break;
+			
+			else if (checkEquality(centroid, oldcentroids)) {
+				
+				rand++;
+				if (rand == 10)
+					break;
+				
+			} 
+			else {
+				rand=0;
+			}
+			
+			oldcentroids = resetcluster(oldcentroids, centroid);
+			
+			
 		}
 
 		long endTime   = System.nanoTime();
@@ -267,33 +291,55 @@ public class KMeans {
 	}
 
 	//Checks if old clusters are equal to new clusters
-	static boolean checkEquality(ArrayList<ArrayList<double[]>> oldClusters, ArrayList<ArrayList<double[]>> newClusters)
+	
+/*****Use this only when you want to compare each member of the cluster to the old cluster. [Comparatively slower Process]*****
+
+	static boolean checkEqual(ArrayList<ArrayList<double[]>> oldClusters, ArrayList<ArrayList<double[]>> newClusters)
 	{
-		for(int i=0; i<newClusters.size(); i++) {
+		for (int i = 0; i < newClusters.size(); i++) {
 
-			if(oldClusters.size() != newClusters.size())
+			for (int j = 0; j < newClusters.get(i).size(); j++) {
 
-				return false;
+				if (oldClusters.get(i).size() != newClusters.get(i).size()) {
+					return false;
 
-			for(int j=0; j<newClusters.get(i).size(); j++) {
+				}
+				out: while (true) {
+					for (double[] check1 : oldClusters.get(i)) {
 
-				if(oldClusters.get(i).size() != newClusters.get(i).size()) {
+						System.out.println(check1 + " " + newClusters.get(i).get(j));
+
+						if (check1 == newClusters.get(i).get(j)) {
+							
+							break out;
+
+						}
+
+					}
+					return false;
+				}
+			}
+
+		}
+
+		return true;
+
+	}	
+********************************************************************************************************/
+
+	//checks if old centroid is equal to new centroid
+	static boolean checkEquality(ArrayList<double[]> oldCentroids, ArrayList<double[]> newCentroids) {
+		for (int i = 0; i < newCentroids.size(); i++) {
+
+			for (int j = 0; j < newCentroids.get(i).length; j++) {
+
+				if (Math.abs(oldCentroids.get(i)[j] - newCentroids.get(i)[j]) > 0.000001) {
 
 					return false;
 
 				}
-				for(int v=0;v<newClusters.get(i).get(j).length;v++ ) {
-
-					if(oldClusters.get(i).get(j)[v] != newClusters.get(i).get(j)[v]) {
-
-						return false;
-
-					}
-
-				}
 
 			}
-
 		}
 
 		return true;
@@ -301,6 +347,7 @@ public class KMeans {
 	}
 
 	//sets old clusters equal to new clusters
+/*********Do not use unless you want to use old check equality method****************
 	static ArrayList<ArrayList<double[]>> resetcluster(ArrayList<ArrayList<double[]>> oldClusters, ArrayList<ArrayList<double[]>> newClusters) 
 	{
 		for(int i=0; i<oldClusters.size(); i++) {	
@@ -324,7 +371,18 @@ public class KMeans {
 		return oldClusters;
 
 	}
+********************************************************************************************************/
+	// updated reset cluster for comparing centroids
+	
+	static ArrayList<double[]> resetcluster(ArrayList<double[]> oldCentroids, ArrayList<double[]> newCentroids) {
+		for (int i = 0; i < oldCentroids.size(); i++) {
 
+			oldCentroids.set(i, newCentroids.get(i));
+
+		}
+		return oldCentroids;
+	}	
+	
 	public static void print2D(double mat[][]) 
 	{ 
 		// Loop through all rows 
