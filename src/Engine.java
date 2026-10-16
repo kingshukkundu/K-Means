@@ -55,6 +55,9 @@ final class Engine {
         this.pointCount = dataset.size();
         this.dimensions = dataset.dimensions();
 
+        // Distinct in-range seeds imply k <= pointCount, which is what the
+        // empty-cluster reseeding step relies on to always find a donor.
+        boolean[] used = new boolean[pointCount];
         seeds = new int[seedIndices.size()];
         for (int i = 0; i < seeds.length; i++) {
             Integer row = seedIndices.get(i);
@@ -62,6 +65,10 @@ final class Engine {
                 throw new IllegalArgumentException(
                     "Seed row index " + row + " is out of range for a dataset of " + pointCount + " rows");
             }
+            if (used[row]) {
+                throw new IllegalArgumentException("Duplicate seed row index " + row);
+            }
+            used[row] = true;
             seeds[i] = row;
         }
         centroids = new double[seeds.length][dimensions];
@@ -167,7 +174,8 @@ final class Engine {
 
     // Re-seed empty clusters with the point farthest from its current centroid.
     // Donor clusters must have at least 2 members so no donor is left empty;
-    // since k never exceeds the dataset size, a valid donor always exists.
+    // since seeds are distinct, k never exceeds the dataset size, so a valid
+    // donor always exists.
     private void reseedEmptyClusters() {
         for (int i = 0; i < centroids.length; i++) {
             if (counts[i] != 0) {
@@ -254,15 +262,15 @@ final class Engine {
      * Immutable snapshot of one clustering run: point-to-cluster
      * assignments (as index lists into the {@link Dataset}), the final
      * centroid vectors, the number of iterations actually run, and
-     * wall-clock execution time. Defensive copies keep the snapshot
-     * stable even if the engine is re-run.
+     * wall-clock execution time. Defensive copies on construction and on
+     * access keep the snapshot stable even if the engine is re-run.
      */
     static final class KMeansResult {
 
-        final List<List<Integer>> clusters;
-        final double[][] centroids;
-        final int iterations;
-        final double executionTimeSeconds;
+        private final List<List<Integer>> clusters;
+        private final double[][] centroids;
+        private final int iterations;
+        private final double executionTimeSeconds;
 
         KMeansResult(List<List<Integer>> clusters, double[][] centroids, int iterations, double executionTimeSeconds) {
             List<List<Integer>> clusterCopy = new ArrayList<>(clusters.size());
@@ -278,6 +286,28 @@ final class Engine {
             this.centroids = centroidCopy;
             this.iterations = iterations;
             this.executionTimeSeconds = executionTimeSeconds;
+        }
+
+        List<List<Integer>> clusters() {
+            return clusters;
+        }
+
+        // double[][] is inherently mutable, so a fresh copy is returned
+        // to keep the snapshot immutable.
+        double[][] centroids() {
+            double[][] copy = new double[centroids.length][];
+            for (int i = 0; i < centroids.length; i++) {
+                copy[i] = centroids[i].clone();
+            }
+            return copy;
+        }
+
+        int iterations() {
+            return iterations;
+        }
+
+        double executionTimeSeconds() {
+            return executionTimeSeconds;
         }
     }
 }

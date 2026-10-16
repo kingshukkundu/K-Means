@@ -79,18 +79,19 @@ public class KMeans {
 
             Engine.KMeansResult result = new Engine(dataset, seedIndices).run(maxIterations);
 
-            System.out.printf(Locale.ROOT, "%nClustering execution time: %.6f seconds%n", result.executionTimeSeconds);
-            System.out.println("Total number of iterations: " + result.iterations);
+            System.out.printf(Locale.ROOT, "%nClustering execution time: %.6f seconds%n", result.executionTimeSeconds());
+            System.out.println("Total number of iterations: " + result.iterations());
 
             System.out.println("\nFinal centroids:");
-            for (int i = 0; i < result.centroids.length; i++) {
+            double[][] centroids = result.centroids();
+            for (int i = 0; i < centroids.length; i++) {
                 System.out.print("Cluster " + (i + 1) + ": ");
-                printFeatures(result.centroids[i]);
+                printFeatures(centroids[i]);
             }
 
             Path outputPath = Paths.get("new.csv");
             try {
-                DatasetIO.writeClusters(outputPath, dataset, result.clusters, false);
+                DatasetIO.writeClusters(outputPath, dataset, result.clusters(), false);
             } catch (FileAlreadyExistsException e) {
                 String warning = Files.isSameFile(inputPath, outputPath)
                     ? "\nnew.csv is the input file; writing output will overwrite it."
@@ -99,7 +100,7 @@ public class KMeans {
                     System.out.println("Output not written.");
                     return;
                 }
-                DatasetIO.writeClusters(outputPath, dataset, result.clusters, true);
+                DatasetIO.writeClusters(outputPath, dataset, result.clusters(), true);
             }
             System.out.println("\nClustered data written to new.csv");
 

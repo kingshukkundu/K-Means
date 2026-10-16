@@ -14,7 +14,9 @@
 //   limitations under the License.
 // ============================================================================
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Immutable storage for the input dataset: one identifier per row plus a
@@ -24,6 +26,11 @@ import java.util.List;
  * clustering engine and output — the hot loops read memory sequentially
  * instead of chasing per-point object references, and no feature value is
  * ever stored twice.
+ *
+ * Invariants are enforced at construction: identifiers must be non-blank
+ * and unique, every row must have the same non-zero number of features,
+ * and every feature value must be finite — so the clustering engine can
+ * rely on finite input producing finite centroids.
  */
 public final class Dataset {
 
@@ -39,7 +46,9 @@ public final class Dataset {
 
     /**
      * Creates a dataset from per-row identifiers and feature vectors.
-     * Every row must have the same non-zero number of features.
+     * Every row must have the same non-zero number of features, every
+     * feature value must be finite, and identifiers must be non-blank
+     * and unique.
      */
     public static Dataset of(List<String> ids, List<double[]> rows) {
         if (ids == null || rows == null || ids.isEmpty() || ids.size() != rows.size()) {
@@ -48,18 +57,24 @@ public final class Dataset {
         }
 
         String[] idArray = new String[ids.size()];
+        Set<String> seenIds = new HashSet<>();
         for (int p = 0; p < ids.size(); p++) {
             String id = ids.get(p);
-            if (id == null || id.isEmpty()) {
+            if (id == null || id.trim().isEmpty()) {
                 throw new IllegalArgumentException("Missing identifier at row " + (p + 1));
+            }
+            if (!seenIds.add(id)) {
+                throw new IllegalArgumentException(
+                    "Duplicate identifier '" + id + "' at row " + (p + 1));
             }
             idArray[p] = id;
         }
 
-        int dimensions = rows.get(0) == null ? 0 : rows.get(0).length;
-        if (dimensions == 0) {
-            throw new IllegalArgumentException("Feature vectors cannot be empty");
+        double[] firstRow = rows.get(0);
+        if (firstRow == null || firstRow.length == 0) {
+            throw new IllegalArgumentException("Feature vector at row 1 is missing or empty");
         }
+        int dimensions = firstRow.length;
 
         // Integer.MAX_VALUE - 2 is the largest array length the JVM allows;
         // the bound also keeps every point * dimensions + d index below in
@@ -75,7 +90,17 @@ public final class Dataset {
             if (row == null || row.length != dimensions) {
                 throw new IllegalArgumentException("Inconsistent feature count at row " + (p + 1));
             }
-            System.arraycopy(row, 0, data, p * dimensions, dimensions);
+            // NaN and Infinity are rejected here rather than trusted to the
+            // caller: either would silently corrupt distance comparisons
+            // (NaN comparisons are always false) and produce NaN centroids.
+            for (int d = 0; d < dimensions; d++) {
+                double value = row[d];
+                if (!Double.isFinite(value)) {
+                    throw new IllegalArgumentException(
+                        "Non-finite feature value at row " + (p + 1) + ", feature " + (d + 1));
+                }
+                data[p * dimensions + d] = value;
+            }
         }
 
         return new Dataset(idArray, data, dimensions);

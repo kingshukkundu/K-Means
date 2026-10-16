@@ -146,11 +146,17 @@ final class DatasetIO {
     }
 
     // Escapes a value for RFC 4180 CSV output (quote-doubling plus quoting)
-    // and defuses spreadsheet formula injection: a value starting with =,
-    // +, -, or @ gets a leading single quote so the cell is treated as
-    // text rather than a formula.
+    // and defuses spreadsheet formula injection: a value whose first
+    // non-whitespace character is =, +, -, or @ gets a leading single quote
+    // so the cell is treated as text rather than a formula. Leading
+    // whitespace is skipped because spreadsheet applications ignore it
+    // before evaluating the cell.
     private static String csvField(String value) {
-        if (!value.isEmpty() && "=+-@".indexOf(value.charAt(0)) >= 0) {
+        int first = 0;
+        while (first < value.length() && Character.isWhitespace(value.charAt(first))) {
+            first++;
+        }
+        if (first < value.length() && "=+-@".indexOf(value.charAt(first)) >= 0) {
             value = "'" + value;
         }
         if (value.indexOf('"') >= 0 || value.indexOf(',') >= 0

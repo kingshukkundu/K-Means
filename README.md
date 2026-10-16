@@ -86,8 +86,9 @@ when it is the input file — you are asked to confirm before it is overwritten)
 
 - One row per data point: `cluster,id,feature1,feature2,...`
 - Identifiers are RFC 4180-quoted when they contain characters needing it,
-  and an identifier starting with `=`, `+`, `-`, or `@` is prefixed with
-  `'` so spreadsheet applications treat it as text instead of a formula.
+  and an identifier whose first non-whitespace character is `=`, `+`, `-`,
+  or `@` is prefixed with `'` so spreadsheet applications treat it as text
+  instead of a formula.
 - Each cluster's rows are grouped together, separated by blank lines
 
 ## How it works
