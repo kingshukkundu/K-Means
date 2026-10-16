@@ -16,6 +16,7 @@
 
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,6 +25,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Scanner;
 import java.util.Set;
 
@@ -37,9 +39,13 @@ public class KMeans {
 
     public static void main(String[] args) {
         try (Scanner sc = new Scanner(System.in)) {
-            String fileName = promptLine(sc, "Enter the name of the CSV file (without .csv extension): ");
+            String fileName = promptLine(sc, "Enter the name of the CSV file (with or without the .csv extension): ");
+            if (fileName.toLowerCase(Locale.ROOT).endsWith(".csv")) {
+                fileName = fileName.substring(0, fileName.length() - ".csv".length());
+            }
             validateFileName(fileName);
-            List<DataPoint> dataset = readDataset(fileName + ".csv");
+            Path inputPath = Paths.get(fileName + ".csv");
+            Dataset dataset = readDataset(inputPath);
 
             int numClusters = promptInt(sc, "Choose the number of clusters (>= 2): ");
             if (numClusters < 2) {
@@ -76,7 +82,7 @@ public class KMeans {
 
             KMeansResult result = new Engine(dataset, seedIndices).run(maxIterations);
 
-            System.out.printf("%nTotal execution time: %.6f seconds%n", result.executionTimeSeconds);
+            System.out.printf("%nClustering execution time: %.6f seconds%n", result.executionTimeSeconds);
             System.out.println("Total number of iterations: " + result.iterations);
 
             System.out.println("\nFinal centroids:");
@@ -87,9 +93,17 @@ public class KMeans {
 
             Path outputPath = Paths.get("new.csv");
             if (Files.exists(outputPath)) {
-                System.out.println("\nNote: an existing new.csv will be overwritten.");
+                boolean isInput = inputPath.toAbsolutePath().normalize()
+                    .equals(outputPath.toAbsolutePath().normalize());
+                String warning = isInput
+                    ? "\nnew.csv is the input file; writing output will overwrite it."
+                    : "\nAn existing new.csv will be overwritten.";
+                if (!confirm(sc, warning + " Overwrite? [y/N]: ")) {
+                    System.out.println("Output not written.");
+                    return;
+                }
             }
-            writeClusters("new.csv", result.clusters);
+            writeClusters(outputPath, dataset, result.clusters);
             System.out.println("\nClustered data written to new.csv");
 
         } catch (IllegalArgumentException e) {
@@ -115,20 +129,19 @@ public class KMeans {
     }
 
     private static int promptInt(Scanner sc, String message) {
-        System.out.print(message);
-        while (!sc.hasNextInt()) {
-            if (!sc.hasNext()) {
-                throw new IllegalArgumentException("Unexpected end of input.");
+        while (true) {
+            String input = promptLine(sc, message);
+            try {
+                return Integer.parseInt(input);
+            } catch (NumberFormatException e) {
+                System.out.println("Invalid input '" + input + "'. Please enter a valid integer.");
             }
-            String invalid = sc.next();
-            System.out.println("Invalid input '" + invalid + "'. Please enter a valid integer.");
-            System.out.print(message);
         }
-        int value = sc.nextInt();
-        if (sc.hasNextLine()) {
-            sc.nextLine(); // consume remaining newline
-        }
-        return value;
+    }
+
+    private static boolean confirm(Scanner sc, String message) {
+        String answer = promptLine(sc, message);
+        return answer.equalsIgnoreCase("y") || answer.equalsIgnoreCase("yes");
     }
 
     private static void validateFileName(String fileName) {
@@ -144,9 +157,10 @@ public class KMeans {
     // CSV I/O
     // -------------------------------------------------------------------------
 
-    private static List<DataPoint> readDataset(String path) throws IOException {
-        List<DataPoint> points = new ArrayList<>();
-        List<String> lines = Files.readAllLines(Paths.get(path), StandardCharsets.UTF_8);
+    private static Dataset readDataset(Path path) throws IOException {
+        List<String> ids = new ArrayList<>();
+        List<double[]> rows = new ArrayList<>();
+        List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
 
         if (lines.isEmpty()) {
             throw new IllegalArgumentException("CSV file is empty.");
@@ -166,7 +180,8 @@ public class KMeans {
             }
 
             String[] tokens = line.split(",", -1);
-            if (expectedFeatureCount == -1) {
+            boolean firstDataRow = expectedFeatureCount == -1;
+            if (firstDataRow) {
                 if (tokens.length < 2) {
                     throw new IllegalArgumentException(
                         "Line " + lineNumber + ": Expected at least 2 columns (ID + at least one feature), found " + tokens.length);
@@ -187,11 +202,14 @@ public class KMeans {
             double[] features = new double[expectedFeatureCount];
             for (int i = 1; i < tokens.length; i++) {
                 try {
-                    features[i - 1] = Double.parseDouble(tokens[i].trim());
+                    // BigDecimal accepts plain decimal/scientific notation only —
+                    // it rejects hex floats, NaN/Infinity, and d/f suffixes that
+                    // Double.parseDouble would silently accept.
+                    features[i - 1] = new BigDecimal(tokens[i].trim()).doubleValue();
                 } catch (NumberFormatException e) {
                     throw new IllegalArgumentException(
                         "Line " + lineNumber + ": Invalid numeric value"
-                            + (lineNumber == 1 ? ". If the file has a header row, remove it first." : ""), e);
+                            + (firstDataRow ? ". If the file has a header row, remove it first." : ""), e);
                 }
                 if (!Double.isFinite(features[i - 1])) {
                     throw new IllegalArgumentException(
@@ -199,58 +217,61 @@ public class KMeans {
                 }
             }
 
-            points.add(new DataPoint(id, features));
+            ids.add(id);
+            rows.add(features);
         }
 
-        if (points.isEmpty()) {
+        if (ids.isEmpty()) {
             throw new IllegalArgumentException("No valid data rows found in CSV file.");
         }
 
-        return points;
+        return Dataset.of(ids, rows);
     }
 
-    private static void writeClusters(String path, List<List<DataPoint>> clusters) throws IOException {
-        try (BufferedWriter writer = Files.newBufferedWriter(Paths.get(path), StandardCharsets.UTF_8)) {
-            int clusterNum = 1;
-            for (List<DataPoint> cluster : clusters) {
-                for (DataPoint point : cluster) {
+    private static void writeClusters(Path path, Dataset dataset, List<List<Integer>> clusters) throws IOException {
+        try (BufferedWriter writer = Files.newBufferedWriter(path, StandardCharsets.UTF_8)) {
+            for (int clusterNum = 1; clusterNum <= clusters.size(); clusterNum++) {
+                if (clusterNum > 1) {
+                    writer.write("\n\n\n\n");
+                }
+                for (int point : clusters.get(clusterNum - 1)) {
                     StringBuilder sb = new StringBuilder();
                     sb.append(clusterNum).append(',');
-                    sb.append(point.getId());
-                    for (double feature : point.getFeatures()) {
-                        sb.append(',').append(feature);
+                    sb.append(dataset.id(point));
+                    for (int d = 0; d < dataset.dimensions(); d++) {
+                        sb.append(',').append(dataset.feature(point, d));
                     }
                     sb.append('\n');
                     writer.write(sb.toString());
                 }
-                writer.write("\n\n\n\n");
-                clusterNum++;
             }
         }
     }
 
     private static void printFeatures(double[] features) {
+        StringBuilder sb = new StringBuilder();
         for (double f : features) {
-            System.out.print(f + " ");
+            if (sb.length() > 0) {
+                sb.append(' ');
+            }
+            sb.append(f);
         }
-        System.out.println();
+        System.out.println(sb);
     }
 
     // -------------------------------------------------------------------------
     // K-Means engine: Lloyd's algorithm with farthest-point re-seeding.
     //
-    // Features live in a single flat row-major array rather than per-point
-    // objects, so the hot loop reads memory sequentially instead of chasing
-    // references. Cluster sums and counts are accumulated during the
-    // assignment pass, so each iteration is a single sweep over the dataset.
-    // Distances are compared in squared form, avoiding a square root per
-    // distance evaluation.
+    // The Dataset owns the feature matrix in flat row-major form, so the hot
+    // loop reads memory sequentially instead of chasing object references.
+    // Cluster sums and counts are accumulated during the assignment pass, so
+    // each iteration is a single sweep over the dataset. Distances are
+    // compared in squared form, avoiding a square root per evaluation.
     // -------------------------------------------------------------------------
 
     private static final class Engine {
 
-        private final List<DataPoint> dataset;
-        private final double[] data;
+        private final Dataset dataset;
         private final int pointCount;
         private final int dimensions;
         private final double[][] centroids;
@@ -258,20 +279,15 @@ public class KMeans {
         private final int[] counts;
         private final int[] assignments;
 
-        Engine(List<DataPoint> dataset, List<Integer> seedIndices) {
+        Engine(Dataset dataset, List<Integer> seedIndices) {
             this.dataset = dataset;
             this.pointCount = dataset.size();
-            this.dimensions = dataset.get(0).getDimensions();
-
-            data = new double[pointCount * dimensions];
-            for (int p = 0; p < pointCount; p++) {
-                dataset.get(p).copyFeaturesTo(data, p * dimensions);
-            }
+            this.dimensions = dataset.dimensions();
 
             int k = seedIndices.size();
             centroids = new double[k][dimensions];
             for (int i = 0; i < k; i++) {
-                System.arraycopy(data, seedIndices.get(i) * dimensions, centroids[i], 0, dimensions);
+                dataset.copyFeaturesTo(seedIndices.get(i), centroids[i], 0);
             }
             sums = new double[k][dimensions];
             counts = new int[k];
@@ -281,6 +297,7 @@ public class KMeans {
         KMeansResult run(int maxIterations) {
             long startTime = System.nanoTime();
 
+            resetAccumulators();
             assignAndAccumulate();
             reseedEmptyClusters();
             recomputeCentroids();
@@ -304,22 +321,22 @@ public class KMeans {
         }
 
         private void assignAndAccumulate() {
-            for (int p = 0, offset = 0; p < pointCount; p++, offset += dimensions) {
-                int nearest = nearestCentroid(offset);
+            for (int p = 0; p < pointCount; p++) {
+                int nearest = nearestCentroid(p);
                 assignments[p] = nearest;
                 counts[nearest]++;
                 double[] sum = sums[nearest];
                 for (int d = 0; d < dimensions; d++) {
-                    sum[d] += data[offset + d];
+                    sum[d] += dataset.feature(p, d);
                 }
             }
         }
 
-        private int nearestCentroid(int offset) {
+        private int nearestCentroid(int point) {
             int nearest = 0;
-            double minDist = squaredDistance(offset, centroids[0]);
+            double minDist = squaredDistance(point, centroids[0]);
             for (int i = 1; i < centroids.length; i++) {
-                double dist = squaredDistance(offset, centroids[i]);
+                double dist = squaredDistance(point, centroids[i]);
                 if (dist < minDist) {
                     minDist = dist;
                     nearest = i;
@@ -328,10 +345,10 @@ public class KMeans {
             return nearest;
         }
 
-        private double squaredDistance(int offset, double[] centroid) {
+        private double squaredDistance(int point, double[] centroid) {
             double sum = 0.0;
             for (int d = 0; d < dimensions; d++) {
-                double diff = data[offset + d] - centroid[d];
+                double diff = dataset.feature(point, d) - centroid[d];
                 sum += diff * diff;
             }
             return sum;
@@ -354,12 +371,12 @@ public class KMeans {
                 }
                 int farthest = -1;
                 double maxDist = -1;
-                for (int p = 0, offset = 0; p < pointCount; p++, offset += dimensions) {
+                for (int p = 0; p < pointCount; p++) {
                     int source = assignments[p];
                     if (counts[source] < 2) {
                         continue;
                     }
-                    double dist = squaredDistance(offset, centroids[source]);
+                    double dist = squaredDistance(p, centroids[source]);
                     if (dist > maxDist) {
                         maxDist = dist;
                         farthest = p;
@@ -369,12 +386,11 @@ public class KMeans {
                     continue;
                 }
                 int source = assignments[farthest];
-                int offset = farthest * dimensions;
                 assignments[farthest] = i;
                 counts[source]--;
                 counts[i]++;
                 for (int d = 0; d < dimensions; d++) {
-                    double value = data[offset + d];
+                    double value = dataset.feature(farthest, d);
                     sums[source][d] -= value;
                     sums[i][d] += value;
                 }
@@ -387,21 +403,20 @@ public class KMeans {
                     continue;
                 }
                 double inverse = 1.0 / counts[i];
-                double[] centroid = new double[dimensions];
+                double[] centroid = centroids[i];
                 for (int d = 0; d < dimensions; d++) {
                     centroid[d] = sums[i][d] * inverse;
                 }
-                centroids[i] = centroid;
             }
         }
 
-        private List<List<DataPoint>> buildClusters() {
-            List<List<DataPoint>> clusters = new ArrayList<>(centroids.length);
+        private List<List<Integer>> buildClusters() {
+            List<List<Integer>> clusters = new ArrayList<>(centroids.length);
             for (int i = 0; i < centroids.length; i++) {
                 clusters.add(new ArrayList<>());
             }
             for (int p = 0; p < pointCount; p++) {
-                clusters.get(assignments[p]).add(dataset.get(p));
+                clusters.get(assignments[p]).add(p);
             }
             return clusters;
         }
@@ -432,12 +447,12 @@ public class KMeans {
     // -------------------------------------------------------------------------
 
     private static final class KMeansResult {
-        final List<List<DataPoint>> clusters;
+        final List<List<Integer>> clusters;
         final double[][] centroids;
         final int iterations;
         final double executionTimeSeconds;
 
-        KMeansResult(List<List<DataPoint>> clusters, double[][] centroids, int iterations, double executionTimeSeconds) {
+        KMeansResult(List<List<Integer>> clusters, double[][] centroids, int iterations, double executionTimeSeconds) {
             this.clusters = clusters;
             this.centroids = centroids;
             this.iterations = iterations;

@@ -21,8 +21,10 @@ The input is a plain CSV file with **no header row**:
 - **Columns 2…n** — numeric features. Every row must have the same number of
   columns, and there must be at least one feature column.
 
-Blank lines and a UTF-8 BOM are ignored. Non-finite values (`NaN`, `Infinity`)
-and ragged rows are rejected with a line-numbered error message.
+Blank lines and a UTF-8 BOM are ignored. Only plain decimal and scientific
+notation is accepted — non-finite values (`NaN`, `Infinity`), hex floats, type
+suffixes (`1.5d`, `2f`), and ragged rows are rejected with a line-numbered
+error message.
 
 Example `data.csv`:
 
@@ -38,7 +40,7 @@ dave,8.7,9.2
 Compile once:
 
 ```sh
-javac -d out src/KMeans.java src/DataPoint.java
+javac -d out src/*.java
 ```
 
 Run from the directory containing your CSV file:
@@ -58,7 +60,7 @@ java -cp ../out KMeans
 
 The program then prompts for:
 
-1. **CSV file name** — without the `.csv` extension. Path traversal
+1. **CSV file name** — the `.csv` extension is optional. Path traversal
    (`..`, `/`, `\`) is rejected for safety.
 2. **Number of clusters** — between 2 and the number of data rows.
 3. **Maximum iterations** — an upper bound; the algorithm may stop earlier.
@@ -71,11 +73,12 @@ The program then prompts for:
 
 Console:
 
-- Total execution time (seconds)
+- Clustering execution time (seconds)
 - Number of iterations actually run
 - The final centroid of each cluster
 
-`new.csv` (written to the current directory, overwriting any existing file):
+`new.csv` (written to the current directory; if it already exists — including
+when it is the input file — you are asked to confirm before it is overwritten):
 
 - One row per data point: `cluster,id,feature1,feature2,...`
 - Each cluster's rows are grouped together, separated by blank lines
@@ -84,9 +87,9 @@ Console:
 
 - **Algorithm** — classic Lloyd's algorithm: assign each point to its nearest
   centroid, recompute each centroid as the mean of its members, repeat.
-- **Flat data layout** — all features are stored in a single row-major
-  `double[]`, so the hot loop reads memory sequentially instead of chasing
-  per-point object references.
+- **Flat data layout** — `Dataset` stores all features in a single row-major
+  `double[]` (one source of truth, no per-point copies), so the hot loop reads
+  memory sequentially instead of chasing object references.
 - **Squared distances** — distances are compared in squared-Euclidean form,
   which preserves ordering while avoiding a square root per evaluation.
 - **Single-pass iterations** — cluster sums, counts, and assignments are all
@@ -97,12 +100,16 @@ Console:
 - **Convergence** — stops early when every centroid coordinate moves less than
   a relative tolerance of `1e-6`, or when the iteration cap is hit.
 
-## Files
+## Project layout
 
-| File               | Purpose                                                        |
-|--------------------|----------------------------------------------------------------|
-| `src/KMeans.java`  | CLI prompts, CSV I/O, validation, and the clustering `Engine`  |
-| `src/DataPoint.java` | Immutable value type: row identifier + feature vector        |
+| File                   | Purpose                                                        |
+|------------------------|----------------------------------------------------------------|
+| `src/KMeans.java`      | CLI prompts, CSV I/O, validation, and the clustering `Engine`  |
+| `src/Dataset.java`     | Immutable flat row-major feature matrix + row identifiers      |
+| `examples/data.csv`    | Ready-to-use sample dataset (15 points, 3 clusters)            |
+| `CONTRIBUTING.md`      | How to report issues and submit pull requests                  |
+| `CODE_OF_CONDUCT.md`   | Community expectations for participation                       |
+| `LICENSE`              | Apache License 2.0                                             |
 
 ## Contributing
 

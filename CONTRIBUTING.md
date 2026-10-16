@@ -16,7 +16,7 @@ Requirements: JDK 8 or later. There are no external dependencies.
 
 ```sh
 # Compile
-javac -d out src/KMeans.java src/DataPoint.java
+javac -d out src/*.java
 
 # Run (from a directory containing your CSV file)
 cd examples
@@ -28,12 +28,13 @@ java -cp ../out KMeans
 
 - Plain Java — please do not add external dependencies.
 - Match the existing style: 4-space indentation, Javadoc on public API.
-- Keep `DataPoint` immutable and keep the `Engine` free of I/O; all file and
-  console interaction stays in `KMeans.main` and its helpers.
+- Keep `Dataset` immutable — it is the single source of truth for the feature
+  matrix — and keep the `Engine` free of I/O; all file and console
+  interaction stays in `KMeans.main` and its helpers.
 - The project must compile cleanly:
 
   ```sh
-  javac -Xlint:all -d out src/KMeans.java src/DataPoint.java
+  javac -Xlint:all -d out src/*.java
   ```
 
 ## Pull requests
