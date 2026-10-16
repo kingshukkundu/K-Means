@@ -29,8 +29,8 @@ java -cp ../out KMeans
 - Plain Java — please do not add external dependencies.
 - Match the existing style: 4-space indentation, Javadoc on public API.
 - Keep `Dataset` immutable — it is the single source of truth for the feature
-  matrix — and keep the `Engine` free of I/O; all file and console
-  interaction stays in `KMeans.main` and its helpers.
+  matrix — and keep the `Engine` free of I/O; file interaction stays in
+  `DatasetIO` and console interaction in `KMeans.main` and its helpers.
 - The project must compile cleanly:
 
   ```sh

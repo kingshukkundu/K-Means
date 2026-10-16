@@ -62,8 +62,9 @@ java -cp ../out KMeans
 The program then prompts for:
 
 1. **CSV file name** — the `.csv` extension is optional. Path traversal and
-   filename characters that are unsafe on any supported platform (`..`, `/`,
-   `\`, `:`, `?`, `*`, `"`, `<`, `>`, `|`, control characters) are rejected
+   filenames that are unsafe on any supported platform (`..`, `/`, `\`,
+   `:`, `?`, `*`, `"`, `<`, `>`, `|`, control characters, Windows device
+   names such as `CON`/`NUL`/`COM1`, trailing dots or spaces) are rejected
    for safety.
 2. **Number of clusters** — between 2 and the number of data rows.
 3. **Maximum iterations** — an upper bound; the algorithm may stop earlier.
@@ -84,6 +85,9 @@ Console:
 when it is the input file — you are asked to confirm before it is overwritten):
 
 - One row per data point: `cluster,id,feature1,feature2,...`
+- Identifiers are RFC 4180-quoted when they contain characters needing it,
+  and an identifier starting with `=`, `+`, `-`, or `@` is prefixed with
+  `'` so spreadsheet applications treat it as text instead of a formula.
 - Each cluster's rows are grouped together, separated by blank lines
 
 ## How it works
@@ -93,8 +97,10 @@ when it is the input file — you are asked to confirm before it is overwritten)
 - **Flat data layout** — `Dataset` stores all features in a single row-major
   `double[]` (one source of truth, no per-point copies), so the hot loop reads
   memory sequentially instead of chasing object references.
-- **Squared distances** — distances are compared in squared-Euclidean form,
-  which preserves ordering while avoiding a square root per evaluation.
+- **Overflow-safe distances** — Euclidean distances are evaluated with a
+  fast squared-sum path that falls back to a max-scaled form when the sum
+  would overflow, so ordering stays correct for finite input of any
+  magnitude.
 - **Overflow-safe centroids** — each centroid is refined as a running mean
   over its members (`mean·(n−1)/n + x/n`), a convex combination that stays
   finite for any finite input where a plain sum could overflow.
@@ -108,7 +114,9 @@ when it is the input file — you are asked to confirm before it is overwritten)
 
 | File                   | Purpose                                                        |
 |------------------------|----------------------------------------------------------------|
-| `src/KMeans.java`      | CLI prompts, CSV I/O, validation, and the clustering `Engine`  |
+| `src/KMeans.java`      | CLI prompts, filename validation, and run orchestration        |
+| `src/DatasetIO.java`   | CSV reading/writing and output escaping                        |
+| `src/Engine.java`      | Lloyd's algorithm engine and result holder                     |
 | `src/Dataset.java`     | Immutable flat row-major feature matrix + row identifiers      |
 | `examples/data.csv`    | Ready-to-use sample dataset (15 points, 3 clusters)            |
 | `CONTRIBUTING.md`      | How to report issues and submit pull requests                  |
