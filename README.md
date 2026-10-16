@@ -17,7 +17,8 @@ writes the grouped result to `new.csv`.
 The input is a plain CSV file with **no header row**:
 
 - **Column 1** — an identifier for the row (a row number or any unique string).
-  It is carried through to the output but never used in calculations.
+  It must be unique, is carried through to the output, and is never used in
+  calculations.
 - **Columns 2…n** — numeric features. Every row must have the same number of
   columns, and there must be at least one feature column.
 
@@ -60,8 +61,10 @@ java -cp ../out KMeans
 
 The program then prompts for:
 
-1. **CSV file name** — the `.csv` extension is optional. Path traversal
-   (`..`, `/`, `\`) is rejected for safety.
+1. **CSV file name** — the `.csv` extension is optional. Path traversal and
+   filename characters that are unsafe on any supported platform (`..`, `/`,
+   `\`, `:`, `?`, `*`, `"`, `<`, `>`, `|`, control characters) are rejected
+   for safety.
 2. **Number of clusters** — between 2 and the number of data rows.
 3. **Maximum iterations** — an upper bound; the algorithm may stop earlier.
 4. **Initial centroid rows** — one distinct row number per cluster. Picking
@@ -92,8 +95,9 @@ when it is the input file — you are asked to confirm before it is overwritten)
   memory sequentially instead of chasing object references.
 - **Squared distances** — distances are compared in squared-Euclidean form,
   which preserves ordering while avoiding a square root per evaluation.
-- **Single-pass iterations** — cluster sums, counts, and assignments are all
-  accumulated in one sweep; no cluster lists are rebuilt per iteration.
+- **Overflow-safe centroids** — each centroid is refined as a running mean
+  over its members (`mean·(n−1)/n + x/n`), a convex combination that stays
+  finite for any finite input where a plain sum could overflow.
 - **Empty-cluster reseeding** — if a cluster loses all its points, it is
   re-seeded with the point farthest from its current centroid rather than
   being dropped or crashed on.

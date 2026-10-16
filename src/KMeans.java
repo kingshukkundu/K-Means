@@ -49,32 +49,31 @@ public class KMeans {
 
             int numClusters = promptInt(sc, "Choose the number of clusters (>= 2): ");
             if (numClusters < 2) {
-                System.out.println("Error: Number of clusters must be >= 2.");
+                System.err.println("Error: Number of clusters must be >= 2.");
                 return;
             }
             if (numClusters > dataset.size()) {
-                System.out.println("Error: Number of clusters cannot exceed dataset size (" + dataset.size() + ").");
+                System.err.println("Error: Number of clusters cannot exceed dataset size (" + dataset.size() + ").");
                 return;
             }
 
             int maxIterations = promptInt(sc, "Please choose the maximum number of iterations: ");
             if (maxIterations < 1) {
-                System.out.println("Error: Maximum iterations must be >= 1.");
+                System.err.println("Error: Maximum iterations must be >= 1.");
                 return;
             }
 
             System.out.println("\nPlease pick a row number between 1 and " + dataset.size() + " for each centroid.\n");
 
             List<Integer> seedIndices = new ArrayList<>();
-            Set<Integer> chosenRows = new HashSet<>();
             for (int i = 1; i <= numClusters; i++) {
                 int row = promptInt(sc, "Centroid " + i + ": Pick the row number: ");
                 if (row < 1 || row > dataset.size()) {
-                    System.out.println("Error: Row number must be between 1 and " + dataset.size() + ".");
+                    System.err.println("Error: Row number must be between 1 and " + dataset.size() + ".");
                     return;
                 }
-                if (!chosenRows.add(row)) {
-                    System.out.println("Error: Duplicate row number selected.");
+                if (seedIndices.contains(row - 1)) {
+                    System.err.println("Error: Duplicate row number selected.");
                     return;
                 }
                 seedIndices.add(row - 1);
@@ -93,8 +92,7 @@ public class KMeans {
 
             Path outputPath = Paths.get("new.csv");
             if (Files.exists(outputPath)) {
-                boolean isInput = inputPath.toAbsolutePath().normalize()
-                    .equals(outputPath.toAbsolutePath().normalize());
+                boolean isInput = Files.isSameFile(inputPath, outputPath);
                 String warning = isInput
                     ? "\nnew.csv is the input file; writing output will overwrite it."
                     : "\nAn existing new.csv will be overwritten.";
@@ -107,11 +105,11 @@ public class KMeans {
             System.out.println("\nClustered data written to new.csv");
 
         } catch (IllegalArgumentException e) {
-            System.out.println("Error: " + e.getMessage());
+            System.err.println("Error: " + e.getMessage());
         } catch (IOException e) {
-            System.out.println("Error reading/writing file: " + e.getMessage());
+            System.err.println("Error reading/writing file: " + e.getMessage());
         } catch (Exception e) {
-            System.out.println("Unexpected error: " + e.getMessage());
+            System.err.println("Unexpected error: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -144,13 +142,22 @@ public class KMeans {
         return answer.equalsIgnoreCase("y") || answer.equalsIgnoreCase("yes");
     }
 
+    // Rejects directory traversal plus every character that is unsafe on at
+    // least one supported platform: \/:*?"<>| (Windows file/drive syntax) and
+    // control characters. Everything else — including non-ASCII names — is
+    // left to the filesystem to validate.
     private static void validateFileName(String fileName) {
         if (fileName.isEmpty()) {
             throw new IllegalArgumentException("File name cannot be empty.");
         }
-        if (fileName.contains("..") || fileName.contains("/") || fileName.contains("\\")) {
-            throw new IllegalArgumentException("Invalid file name. Directory traversal is not allowed.");
+        if (fileName.contains("..") || fileName.chars().anyMatch(KMeans::isIllegalFileNameChar)) {
+            throw new IllegalArgumentException(
+                "Invalid file name. Path separators and other unsafe characters are not allowed.");
         }
+    }
+
+    private static boolean isIllegalFileNameChar(int c) {
+        return c <= 0x1F || c == 0x7F || "\\/:*?\"<>|".indexOf(c) >= 0;
     }
 
     // -------------------------------------------------------------------------
@@ -168,6 +175,7 @@ public class KMeans {
 
         int expectedFeatureCount = -1;
         int lineNumber = 0;
+        Set<String> seenIds = new HashSet<>();
 
         for (String rawLine : lines) {
             lineNumber++;
@@ -197,6 +205,10 @@ public class KMeans {
             if (id.isEmpty()) {
                 throw new IllegalArgumentException(
                     "Line " + lineNumber + ": Missing identifier in the first column.");
+            }
+            if (!seenIds.add(id)) {
+                throw new IllegalArgumentException(
+                    "Line " + lineNumber + ": Duplicate identifier '" + id + "'. Identifiers must be unique.");
             }
 
             double[] features = new double[expectedFeatureCount];
@@ -254,7 +266,7 @@ public class KMeans {
             if (sb.length() > 0) {
                 sb.append(' ');
             }
-            sb.append(f);
+            sb.append(String.format(Locale.ROOT, "%.6g", f));
         }
         System.out.println(sb);
     }
@@ -264,9 +276,10 @@ public class KMeans {
     //
     // The Dataset owns the feature matrix in flat row-major form, so the hot
     // loop reads memory sequentially instead of chasing object references.
-    // Cluster sums and counts are accumulated during the assignment pass, so
-    // each iteration is a single sweep over the dataset. Distances are
-    // compared in squared form, avoiding a square root per evaluation.
+    // Distances are compared in squared form, avoiding a square root per
+    // evaluation, and each centroid is refined as a running mean over its
+    // members — a convex combination that can never overflow, so finite
+    // input features guarantee finite centroids.
     // -------------------------------------------------------------------------
 
     private static final class Engine {
@@ -275,7 +288,6 @@ public class KMeans {
         private final int pointCount;
         private final int dimensions;
         private final double[][] centroids;
-        private final double[][] sums;
         private final int[] counts;
         private final int[] assignments;
 
@@ -289,7 +301,6 @@ public class KMeans {
             for (int i = 0; i < k; i++) {
                 dataset.copyFeaturesTo(seedIndices.get(i), centroids[i], 0);
             }
-            sums = new double[k][dimensions];
             counts = new int[k];
             assignments = new int[pointCount];
         }
@@ -297,16 +308,14 @@ public class KMeans {
         KMeansResult run(int maxIterations) {
             long startTime = System.nanoTime();
 
-            resetAccumulators();
-            assignAndAccumulate();
+            assignAll();
             reseedEmptyClusters();
             recomputeCentroids();
             int iterations = 1;
 
             while (iterations < maxIterations) {
                 double[][] previous = copyCentroids();
-                resetAccumulators();
-                assignAndAccumulate();
+                assignAll();
                 reseedEmptyClusters();
                 recomputeCentroids();
                 iterations++;
@@ -320,15 +329,12 @@ public class KMeans {
             return new KMeansResult(buildClusters(), centroids, iterations, executionTime);
         }
 
-        private void assignAndAccumulate() {
+        private void assignAll() {
+            Arrays.fill(counts, 0);
             for (int p = 0; p < pointCount; p++) {
                 int nearest = nearestCentroid(p);
                 assignments[p] = nearest;
                 counts[nearest]++;
-                double[] sum = sums[nearest];
-                for (int d = 0; d < dimensions; d++) {
-                    sum[d] += dataset.feature(p, d);
-                }
             }
         }
 
@@ -352,13 +358,6 @@ public class KMeans {
                 sum += diff * diff;
             }
             return sum;
-        }
-
-        private void resetAccumulators() {
-            Arrays.fill(counts, 0);
-            for (double[] sum : sums) {
-                Arrays.fill(sum, 0.0);
-            }
         }
 
         // Re-seed empty clusters with the point farthest from its current centroid.
@@ -389,23 +388,28 @@ public class KMeans {
                 assignments[farthest] = i;
                 counts[source]--;
                 counts[i]++;
-                for (int d = 0; d < dimensions; d++) {
-                    double value = dataset.feature(farthest, d);
-                    sums[source][d] -= value;
-                    sums[i][d] += value;
-                }
             }
         }
 
+        // Recomputes each centroid as a running mean over its assigned points:
+        // mean * (n-1)/n + x/n is a convex combination, so it stays finite for
+        // any finite input where a plain sum could overflow. counts is refilled
+        // here and ends up holding the same totals produced above — an empty
+        // cluster simply keeps its previous centroid.
         private void recomputeCentroids() {
-            for (int i = 0; i < centroids.length; i++) {
-                if (counts[i] == 0) {
+            Arrays.fill(counts, 0);
+            for (int p = 0; p < pointCount; p++) {
+                int c = assignments[p];
+                int n = ++counts[c];
+                double[] centroid = centroids[c];
+                if (n == 1) {
+                    dataset.copyFeaturesTo(p, centroid, 0);
                     continue;
                 }
-                double inverse = 1.0 / counts[i];
-                double[] centroid = centroids[i];
+                double keep = (n - 1.0) / n;
+                double add = 1.0 / n;
                 for (int d = 0; d < dimensions; d++) {
-                    centroid[d] = sums[i][d] * inverse;
+                    centroid[d] = centroid[d] * keep + dataset.feature(p, d) * add;
                 }
             }
         }
