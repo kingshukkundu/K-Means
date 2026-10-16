@@ -50,15 +50,16 @@ public class KMeans {
 
             int numClusters = promptInt(sc, "Choose the number of clusters (>= 2): ");
             if (numClusters < 2) {
-                fail("Number of clusters must be >= 2.");
+                throw new IllegalArgumentException("Number of clusters must be >= 2.");
             }
             if (numClusters > dataset.size()) {
-                fail("Number of clusters cannot exceed dataset size (" + dataset.size() + ").");
+                throw new IllegalArgumentException(
+                    "Number of clusters cannot exceed dataset size (" + dataset.size() + ").");
             }
 
             int maxIterations = promptInt(sc, "Please choose the maximum number of iterations: ");
             if (maxIterations < 1) {
-                fail("Maximum iterations must be >= 1.");
+                throw new IllegalArgumentException("Maximum iterations must be >= 1.");
             }
 
             System.out.println("\nPlease pick a row number between 1 and " + dataset.size() + " for each centroid.\n");
@@ -67,10 +68,11 @@ public class KMeans {
             for (int i = 1; i <= numClusters; i++) {
                 int row = promptInt(sc, "Centroid " + i + ": Pick the row number: ");
                 if (row < 1 || row > dataset.size()) {
-                    fail("Row number must be between 1 and " + dataset.size() + ".");
+                    throw new IllegalArgumentException(
+                        "Row number must be between 1 and " + dataset.size() + ".");
                 }
                 if (seedIndices.contains(row - 1)) {
-                    fail("Duplicate row number selected.");
+                    throw new IllegalArgumentException("Duplicate row number selected.");
                 }
                 seedIndices.add(row - 1);
             }
@@ -142,17 +144,13 @@ public class KMeans {
         return answer.equalsIgnoreCase("y") || answer.equalsIgnoreCase("yes");
     }
 
-    private static void fail(String message) {
-        System.err.println("Error: " + message);
-        System.exit(1);
-    }
-
     // Rejects directory traversal plus every name that is unsafe on at
     // least one supported platform: \/:*?"<>| (Windows file/drive syntax),
     // control characters, Windows device names (matched on the portion
-    // before the first dot, since an extension may be appended), and names
-    // ending in a dot or space. Everything else — including non-ASCII
-    // names — is left to the filesystem to validate.
+    // before the first dot, with surrounding whitespace stripped — Windows
+    // ignores both when resolving names, so "con .csv" still hits CON),
+    // and names ending in a dot or space. Everything else — including
+    // non-ASCII names — is left to the filesystem to validate.
     private static void validateFileName(String fileName) {
         if (fileName.isEmpty()) {
             throw new IllegalArgumentException("File name cannot be empty.");
@@ -163,7 +161,7 @@ public class KMeans {
         }
         int dot = fileName.indexOf('.');
         String baseName = dot >= 0 ? fileName.substring(0, dot) : fileName;
-        if (WINDOWS_DEVICE_NAME.matcher(baseName).matches()
+        if (WINDOWS_DEVICE_NAME.matcher(baseName.trim()).matches()
                 || fileName.endsWith(".") || fileName.endsWith(" ")) {
             throw new IllegalArgumentException(
                 "Invalid file name. Reserved or platform-incompatible names are not allowed.");

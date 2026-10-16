@@ -16,6 +16,7 @@
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -30,7 +31,8 @@ import java.util.List;
  * ordered distances.
  *
  * The engine performs no I/O: it consumes an immutable {@link Dataset}
- * and seed row indices, and returns a {@link KMeansResult}.
+ * and seed row indices, and returns an immutable {@link KMeansResult}.
+ * {@link #run(int)} is deterministic and may be invoked repeatedly.
  */
 final class Engine {
 
@@ -39,27 +41,41 @@ final class Engine {
     private final Dataset dataset;
     private final int pointCount;
     private final int dimensions;
+    private final int[] seeds;
     private final double[][] centroids;
     private final int[] counts;
     private final int[] assignments;
 
     Engine(Dataset dataset, List<Integer> seedIndices) {
+        if (dataset == null || seedIndices == null || seedIndices.isEmpty()) {
+            throw new IllegalArgumentException(
+                "Dataset must be non-null and at least one seed index is required");
+        }
         this.dataset = dataset;
         this.pointCount = dataset.size();
         this.dimensions = dataset.dimensions();
 
-        int k = seedIndices.size();
-        centroids = new double[k][dimensions];
-        for (int i = 0; i < k; i++) {
-            dataset.copyFeaturesTo(seedIndices.get(i), centroids[i], 0);
+        seeds = new int[seedIndices.size()];
+        for (int i = 0; i < seeds.length; i++) {
+            Integer row = seedIndices.get(i);
+            if (row == null || row < 0 || row >= pointCount) {
+                throw new IllegalArgumentException(
+                    "Seed row index " + row + " is out of range for a dataset of " + pointCount + " rows");
+            }
+            seeds[i] = row;
         }
-        counts = new int[k];
+        centroids = new double[seeds.length][dimensions];
+        counts = new int[seeds.length];
         assignments = new int[pointCount];
     }
 
     KMeansResult run(int maxIterations) {
+        if (maxIterations < 1) {
+            throw new IllegalArgumentException("Maximum iterations must be >= 1");
+        }
         long startTime = System.nanoTime();
 
+        seedCentroids();
         assignAll();
         reseedEmptyClusters();
         recomputeCentroids();
@@ -79,6 +95,14 @@ final class Engine {
 
         double executionTime = (System.nanoTime() - startTime) / 1_000_000_000.0;
         return new KMeansResult(buildClusters(), centroids, iterations, executionTime);
+    }
+
+    // Restores every centroid to its seed row so a repeated run() produces
+    // the same result instead of continuing from the previous run's state.
+    private void seedCentroids() {
+        for (int i = 0; i < seeds.length; i++) {
+            dataset.copyFeaturesTo(seeds[i], centroids[i], 0);
+        }
     }
 
     private void assignAll() {
@@ -107,10 +131,13 @@ final class Engine {
     // single pass of squared differences plus one square root; if that
     // sum overflows to +Inf, the distance is recomputed as
     // max|d|·sqrt(Σ(d/max|d|)²), which keeps ordering correct for
-    // magnitudes beyond sqrt(Double.MAX_VALUE) ≈ 1.3e154. A single
-    // consistent linear metric is required — mixing squared and scaled
-    // values across a point's candidates would corrupt comparisons, and
-    // returning +Inf for every overflow would collapse all ordering.
+    // magnitudes beyond sqrt(Double.MAX_VALUE) ≈ 1.3e154. When even a
+    // coordinate difference exceeds the largest finite double, the true
+    // distance is itself unrepresentable and the result saturates at
+    // +Inf — the only representable answer, since no double could order
+    // two such distances anyway. A single consistent linear metric is
+    // required — mixing squared and scaled values across a point's
+    // candidates would corrupt comparisons.
     private double distanceTo(int point, double[] centroid) {
         double sum = 0.0;
         for (int d = 0; d < dimensions; d++) {
@@ -224,9 +251,11 @@ final class Engine {
     }
 
     /**
-     * Immutable outcome of one clustering run: point-to-cluster assignments
-     * (as index lists into the {@link Dataset}), the final centroid vectors,
-     * the number of iterations actually run, and wall-clock execution time.
+     * Immutable snapshot of one clustering run: point-to-cluster
+     * assignments (as index lists into the {@link Dataset}), the final
+     * centroid vectors, the number of iterations actually run, and
+     * wall-clock execution time. Defensive copies keep the snapshot
+     * stable even if the engine is re-run.
      */
     static final class KMeansResult {
 
@@ -236,8 +265,17 @@ final class Engine {
         final double executionTimeSeconds;
 
         KMeansResult(List<List<Integer>> clusters, double[][] centroids, int iterations, double executionTimeSeconds) {
-            this.clusters = clusters;
-            this.centroids = centroids;
+            List<List<Integer>> clusterCopy = new ArrayList<>(clusters.size());
+            for (List<Integer> cluster : clusters) {
+                clusterCopy.add(Collections.unmodifiableList(new ArrayList<>(cluster)));
+            }
+            this.clusters = Collections.unmodifiableList(clusterCopy);
+
+            double[][] centroidCopy = new double[centroids.length][];
+            for (int i = 0; i < centroids.length; i++) {
+                centroidCopy[i] = centroids[i].clone();
+            }
+            this.centroids = centroidCopy;
             this.iterations = iterations;
             this.executionTimeSeconds = executionTimeSeconds;
         }

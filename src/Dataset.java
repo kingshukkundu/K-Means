@@ -61,7 +61,15 @@ public final class Dataset {
             throw new IllegalArgumentException("Feature vectors cannot be empty");
         }
 
-        double[] data = new double[rows.size() * dimensions];
+        // Integer.MAX_VALUE - 2 is the largest array length the JVM allows;
+        // the bound also keeps every point * dimensions + d index below in
+        // feature()/copyFeaturesTo() inside int range.
+        long cellCount = (long) rows.size() * dimensions;
+        if (cellCount > Integer.MAX_VALUE - 2L) {
+            throw new IllegalArgumentException(
+                "Dataset is too large: " + cellCount + " feature values exceeds the supported maximum");
+        }
+        double[] data = new double[(int) cellCount];
         for (int p = 0; p < rows.size(); p++) {
             double[] row = rows.get(p);
             if (row == null || row.length != dimensions) {
