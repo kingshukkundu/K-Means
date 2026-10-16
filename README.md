@@ -90,6 +90,8 @@ when it is the input file — you are asked to confirm before it is overwritten)
   or `@` is prefixed with `'` so spreadsheet applications treat it as text
   instead of a formula.
 - Each cluster's rows are grouped together, separated by blank lines
+- `new.csv` is a report, not re-ingestable input — the writer quotes and
+  escapes identifiers, while the reader expects plain unquoted CSV
 
 ## How it works
 

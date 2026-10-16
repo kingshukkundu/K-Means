@@ -26,10 +26,8 @@ import java.util.Scanner;
 import java.util.regex.Pattern;
 
 /**
- * K-Means clustering application entry point.
- * Handles CLI interaction and input-file validation and orchestrates the
- * run; CSV I/O lives in {@link DatasetIO} and the clustering algorithm in
- * {@link Engine}.
+ * K-Means clustering application entry point: CLI prompts, input-file
+ * validation, and orchestration of {@link DatasetIO} and {@link Engine}.
  */
 public class KMeans {
 
@@ -40,9 +38,7 @@ public class KMeans {
         try (Scanner sc = new Scanner(System.in)) {
             String fileName = promptLine(sc, "Enter the name of the CSV file (with or without the .csv extension): ");
             validateFileName(fileName);
-            // An explicit .csv extension is kept exactly as typed so the name
-            // resolves correctly on case-sensitive filesystems; otherwise it
-            // is appended.
+            // An explicit .csv extension is kept as typed; otherwise appended.
             Path inputPath = Paths.get(fileName.toLowerCase(Locale.ROOT).endsWith(".csv")
                 ? fileName
                 : fileName + ".csv");
@@ -64,16 +60,19 @@ public class KMeans {
 
             System.out.println("\nPlease pick a row number between 1 and " + dataset.size() + " for each centroid.\n");
 
+            // Bitmap for O(1) duplicate-seed checks.
             List<Integer> seedIndices = new ArrayList<>();
+            boolean[] seedUsed = new boolean[dataset.size()];
             for (int i = 1; i <= numClusters; i++) {
                 int row = promptInt(sc, "Centroid " + i + ": Pick the row number: ");
                 if (row < 1 || row > dataset.size()) {
                     throw new IllegalArgumentException(
                         "Row number must be between 1 and " + dataset.size() + ".");
                 }
-                if (seedIndices.contains(row - 1)) {
+                if (seedUsed[row - 1]) {
                     throw new IllegalArgumentException("Duplicate row number selected.");
                 }
+                seedUsed[row - 1] = true;
                 seedIndices.add(row - 1);
             }
 
@@ -122,7 +121,10 @@ public class KMeans {
     // -------------------------------------------------------------------------
 
     private static String promptLine(Scanner sc, String message) {
+        // print() leaves the prompt buffered; flush or the terminal shows
+        // nothing while hasNextLine() blocks.
         System.out.print(message);
+        System.out.flush();
         if (!sc.hasNextLine()) {
             throw new IllegalArgumentException("Unexpected end of input.");
         }
@@ -145,10 +147,7 @@ public class KMeans {
         return answer.equalsIgnoreCase("y") || answer.equalsIgnoreCase("yes");
     }
 
-    // isSameFile throws if either path cannot be stat'ed (e.g. the input
-    // file was moved or deleted while the prompts were open); a failed
-    // comparison must fall back to the generic overwrite warning rather
-    // than abort the run after clustering has already completed.
+    // A failed comparison falls back to the generic overwrite warning.
     private static boolean isSameFile(Path a, Path b) {
         try {
             return Files.isSameFile(a, b);
@@ -157,14 +156,8 @@ public class KMeans {
         }
     }
 
-    // Rejects directory traversal plus every name that is unsafe on at
-    // least one supported platform: \/:*?"<>| (Windows file/drive syntax),
-    // control characters, Windows device names (matched on the portion
-    // before the first dot, with surrounding whitespace stripped — Windows
-    // ignores both when resolving names, so "con .csv" still hits CON),
-    // and names ending in a dot. The input arrives trimmed from
-    // promptLine, so a trailing space cannot occur; everything else —
-    // including non-ASCII names — is left to the filesystem to validate.
+    // Rejects traversal and names unsafe on Windows: \/:*?"<>|, control
+    // chars, device names, trailing dots, and whitespace around the base name.
     private static void validateFileName(String fileName) {
         if (fileName.isEmpty()) {
             throw new IllegalArgumentException("File name cannot be empty.");
@@ -175,7 +168,9 @@ public class KMeans {
         }
         int dot = fileName.indexOf('.');
         String baseName = dot >= 0 ? fileName.substring(0, dot) : fileName;
-        if (WINDOWS_DEVICE_NAME.matcher(baseName.trim()).matches() || fileName.endsWith(".")) {
+        String trimmedBase = baseName.trim();
+        if (trimmedBase.isEmpty() || WINDOWS_DEVICE_NAME.matcher(trimmedBase).matches()
+                || fileName.endsWith(".") || !baseName.equals(trimmedBase)) {
             throw new IllegalArgumentException(
                 "Invalid file name. Reserved or platform-incompatible names are not allowed.");
         }

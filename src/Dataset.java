@@ -19,18 +19,9 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Immutable storage for the input dataset: one identifier per row plus a
- * single flat row-major feature matrix.
- *
- * Keeping all features contiguous is the single source of truth for both the
- * clustering engine and output — the hot loops read memory sequentially
- * instead of chasing per-point object references, and no feature value is
- * ever stored twice.
- *
- * Invariants are enforced at construction: identifiers are trimmed,
- * non-empty, and unique; every row has the same non-zero number of
- * features; and every feature value is finite — so the clustering
- * engine can rely on finite input producing finite centroids.
+ * Immutable dataset: one identifier per row plus a flat row-major feature
+ * matrix. Invariants (unique non-empty ids, uniform feature counts, finite
+ * values) are enforced at construction.
  */
 public final class Dataset {
 
@@ -44,45 +35,46 @@ public final class Dataset {
         this.dimensions = dimensions;
     }
 
-    /**
-     * Creates a dataset from per-row identifiers and feature vectors.
-     * Every row must have the same non-zero number of features, every
-     * feature value must be finite, and identifiers are trimmed and
-     * must be non-empty and unique.
-     */
+    /** Creates a dataset from per-row identifiers and feature vectors. */
     public static Dataset of(List<String> ids, List<double[]> rows) {
-        if (ids == null || rows == null || ids.isEmpty() || ids.size() != rows.size()) {
+        return of(ids, rows, null);
+    }
+
+    // Variant for the CSV reader: lineNumbers maps each row to its source
+    // line so errors cite file lines, not data-row indexes.
+    static Dataset of(List<String> ids, List<double[]> rows, int[] lineNumbers) {
+        if (ids == null || rows == null || ids.isEmpty() || ids.size() != rows.size()
+                || (lineNumbers != null && lineNumbers.length != ids.size())) {
             throw new IllegalArgumentException(
-                "IDs and rows must be non-null, non-empty, and equal in size");
+                "IDs and rows must be non-null, non-empty, and equal in size; "
+                    + "line numbers, when given, must match that size");
         }
 
         String[] idArray = new String[ids.size()];
         Set<String> seenIds = new HashSet<>();
         for (int p = 0; p < ids.size(); p++) {
             String rawId = ids.get(p);
-            // Identifiers are normalized once at the boundary: what gets
-            // validated, deduplicated, stored, and written back out is always
-            // the same trimmed value, so "a" and " a" can never coexist.
+            // Trim before validating so "a" and " a" can never coexist.
             String id = rawId == null ? null : rawId.trim();
             if (id == null || id.isEmpty()) {
-                throw new IllegalArgumentException("Missing identifier at row " + (p + 1));
+                throw new IllegalArgumentException("Missing identifier at " + rowRef(lineNumbers, p));
             }
             if (!seenIds.add(id)) {
                 throw new IllegalArgumentException(
-                    "Duplicate identifier '" + id + "' at row " + (p + 1));
+                    "Duplicate identifier '" + id + "' at " + rowRef(lineNumbers, p));
             }
             idArray[p] = id;
         }
 
         double[] firstRow = rows.get(0);
         if (firstRow == null || firstRow.length == 0) {
-            throw new IllegalArgumentException("Feature vector at row 1 is missing or empty");
+            throw new IllegalArgumentException(
+                "Feature vector at " + rowRef(lineNumbers, 0) + " is missing or empty");
         }
         int dimensions = firstRow.length;
 
-        // Integer.MAX_VALUE - 2 is the largest array length the JVM allows;
-        // the bound also keeps every point * dimensions + d index below in
-        // feature()/copyFeaturesTo() inside int range.
+        // Integer.MAX_VALUE - 2 is the largest array length the JVM allows
+        // and keeps all flat indexes in int range.
         long cellCount = (long) rows.size() * dimensions;
         if (cellCount > Integer.MAX_VALUE - 2L) {
             throw new IllegalArgumentException(
@@ -92,22 +84,26 @@ public final class Dataset {
         for (int p = 0; p < rows.size(); p++) {
             double[] row = rows.get(p);
             if (row == null || row.length != dimensions) {
-                throw new IllegalArgumentException("Inconsistent feature count at row " + (p + 1));
+                throw new IllegalArgumentException(
+                    "Inconsistent feature count at " + rowRef(lineNumbers, p));
             }
-            // NaN and Infinity are rejected here rather than trusted to the
-            // caller: either would silently corrupt distance comparisons
-            // (NaN comparisons are always false) and produce NaN centroids.
+            // NaN/Infinity would corrupt distance comparisons and centroids.
             for (int d = 0; d < dimensions; d++) {
                 double value = row[d];
                 if (!Double.isFinite(value)) {
                     throw new IllegalArgumentException(
-                        "Non-finite feature value at row " + (p + 1) + ", feature " + (d + 1));
+                        "Non-finite feature value at " + rowRef(lineNumbers, p)
+                            + ", feature " + (d + 1));
                 }
                 data[p * dimensions + d] = value;
             }
         }
 
         return new Dataset(idArray, data, dimensions);
+    }
+
+    private static String rowRef(int[] lineNumbers, int p) {
+        return lineNumbers == null ? "row " + (p + 1) : "line " + lineNumbers[p];
     }
 
     /**

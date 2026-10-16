@@ -21,28 +21,21 @@ import java.util.List;
 
 /**
  * K-Means engine: Lloyd's algorithm with farthest-point re-seeding.
- *
- * The Dataset owns the feature matrix in flat row-major form, so the hot
- * loop reads memory sequentially instead of chasing object references.
- * Distances are compared in a single linear metric computed
- * overflow-safely, and each centroid is refined as a running mean over
- * its members — a convex combination that can never overflow — so
- * finite input features guarantee finite centroids and correctly
- * ordered distances.
- *
- * The engine performs no I/O: it consumes an immutable {@link Dataset}
- * and seed row indices, and returns an immutable {@link KMeansResult}.
- * {@link #run(int)} is deterministic and may be invoked repeatedly.
+ * Performs no I/O; {@link #run(int)} is deterministic and repeatable.
  */
 final class Engine {
 
     private static final double CONVERGENCE_TOLERANCE = 1e-6;
+    // Floor under the relative tolerance so a centroid at exactly zero is
+    // not held to a bitwise-exact match.
+    private static final double MIN_CONVERGENCE_SCALE = 1e-12;
 
     private final Dataset dataset;
     private final int pointCount;
     private final int dimensions;
     private final int[] seeds;
     private final double[][] centroids;
+    private final double[][] previousCentroids;
     private final int[] counts;
     private final int[] assignments;
 
@@ -55,8 +48,8 @@ final class Engine {
         this.pointCount = dataset.size();
         this.dimensions = dataset.dimensions();
 
-        // Distinct in-range seeds imply k <= pointCount, which is what the
-        // empty-cluster reseeding step relies on to always find a donor.
+        // Distinct in-range seeds imply k <= pointCount, which the
+        // empty-cluster reseeding step relies on.
         boolean[] used = new boolean[pointCount];
         seeds = new int[seedIndices.size()];
         for (int i = 0; i < seeds.length; i++) {
@@ -72,6 +65,7 @@ final class Engine {
             seeds[i] = row;
         }
         centroids = new double[seeds.length][dimensions];
+        previousCentroids = new double[seeds.length][dimensions];
         counts = new int[seeds.length];
         assignments = new int[pointCount];
     }
@@ -82,18 +76,18 @@ final class Engine {
         }
         long startTime = System.nanoTime();
 
-        // Iteration 1 starts from the seed vectors, so a seed set that is
-        // already optimal converges in a single pass instead of two.
+        // Iteration 1 starts from the seed vectors, so an already-optimal
+        // seed set converges in a single pass.
         seedCentroids();
         int iterations = 0;
         while (iterations < maxIterations) {
-            double[][] previous = copyCentroids();
+            snapshotCentroids();
             assignAll();
             reseedEmptyClusters();
             recomputeCentroids();
             iterations++;
 
-            if (hasConverged(previous)) {
+            if (hasConverged()) {
                 break;
             }
         }
@@ -102,8 +96,7 @@ final class Engine {
         return new KMeansResult(buildClusters(), centroids, iterations, executionTime);
     }
 
-    // Restores every centroid to its seed row so a repeated run() produces
-    // the same result instead of continuing from the previous run's state.
+    // Restores seed vectors so a repeated run() starts from the same state.
     private void seedCentroids() {
         for (int i = 0; i < seeds.length; i++) {
             dataset.copyFeaturesTo(seeds[i], centroids[i], 0);
@@ -132,17 +125,8 @@ final class Engine {
         return nearest;
     }
 
-    // Euclidean distance, computed overflow-safely. The common case is a
-    // single pass of squared differences plus one square root; if that
-    // sum overflows to +Inf, the distance is recomputed as
-    // max|d|·sqrt(Σ(d/max|d|)²), which keeps ordering correct for
-    // magnitudes beyond sqrt(Double.MAX_VALUE) ≈ 1.3e154. When even a
-    // coordinate difference exceeds the largest finite double, the true
-    // distance is itself unrepresentable and the result saturates at
-    // +Inf — the only representable answer, since no double could order
-    // two such distances anyway. A single consistent linear metric is
-    // required — mixing squared and scaled values across a point's
-    // candidates would corrupt comparisons.
+    // Euclidean distance: overflows fall back to a max-scaled form so
+    // ordering stays correct; unrepresentable distances saturate at +Inf.
     private double distanceTo(int point, double[] centroid) {
         double sum = 0.0;
         for (int d = 0; d < dimensions; d++) {
@@ -170,10 +154,8 @@ final class Engine {
         return maxAbs * Math.sqrt(scaled);
     }
 
-    // Re-seed empty clusters with the point farthest from its current centroid.
-    // Donor clusters must have at least 2 members so no donor is left empty;
-    // since seeds are distinct, k never exceeds the dataset size, so a valid
-    // donor always exists.
+    // Re-seeds each empty cluster with the point farthest from its current
+    // centroid; donor clusters must keep at least 1 member.
     private void reseedEmptyClusters() {
         for (int i = 0; i < centroids.length; i++) {
             if (counts[i] != 0) {
@@ -202,11 +184,8 @@ final class Engine {
         }
     }
 
-    // Recomputes each centroid as a running mean over its assigned points:
-    // mean * (n-1)/n + x/n is a convex combination, so it stays finite for
-    // any finite input where a plain sum could overflow. counts is refilled
-    // here and ends up holding the same totals produced above — an empty
-    // cluster simply keeps its previous centroid.
+    // Recomputes each centroid as a running mean — a convex combination
+    // that cannot overflow. An empty cluster keeps its previous centroid.
     private void recomputeCentroids() {
         Arrays.fill(counts, 0);
         for (int p = 0; p < pointCount; p++) {
@@ -236,19 +215,20 @@ final class Engine {
         return clusters;
     }
 
-    private double[][] copyCentroids() {
-        double[][] copy = new double[centroids.length][];
+    // Persistent buffer refilled each iteration — no per-pass allocation
+    // and no stale values across repeated run() calls.
+    private void snapshotCentroids() {
         for (int i = 0; i < centroids.length; i++) {
-            copy[i] = centroids[i].clone();
+            System.arraycopy(centroids[i], 0, previousCentroids[i], 0, dimensions);
         }
-        return copy;
     }
 
-    private boolean hasConverged(double[][] previous) {
+    private boolean hasConverged() {
         for (int i = 0; i < centroids.length; i++) {
             for (int d = 0; d < dimensions; d++) {
-                double scale = Math.max(1.0, Math.abs(centroids[i][d]));
-                if (Math.abs(centroids[i][d] - previous[i][d]) > CONVERGENCE_TOLERANCE * scale) {
+                double scale = Math.max(MIN_CONVERGENCE_SCALE, Math.abs(centroids[i][d]));
+                if (Math.abs(centroids[i][d] - previousCentroids[i][d])
+                        > CONVERGENCE_TOLERANCE * scale) {
                     return false;
                 }
             }
@@ -257,11 +237,8 @@ final class Engine {
     }
 
     /**
-     * Immutable snapshot of one clustering run: point-to-cluster
-     * assignments (as index lists into the {@link Dataset}), the final
-     * centroid vectors, the number of iterations actually run, and
-     * wall-clock execution time. Defensive copies on construction and on
-     * access keep the snapshot stable even if the engine is re-run.
+     * Immutable snapshot of one clustering run: cluster assignments, final
+     * centroids, iteration count, and wall-clock time. Defensively copied.
      */
     static final class KMeansResult {
 
@@ -290,8 +267,7 @@ final class Engine {
             return clusters;
         }
 
-        // double[][] is inherently mutable, so a fresh copy is returned
-        // to keep the snapshot immutable.
+        // Fresh copy: double[][] is inherently mutable.
         double[][] centroids() {
             double[][] copy = new double[centroids.length][];
             for (int i = 0; i < centroids.length; i++) {
