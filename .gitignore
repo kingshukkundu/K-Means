@@ -1,8 +1,32 @@
 # Compiled class file
 *.class
 
+# Build output directories
+out/
+bin/
+build/
+target/
+
+# Generated program output
+new.csv
+
 # Log file
 *.log
+
+# macOS / Windows / Linux OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+
+# IDEs and editors
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+nbproject/
 
 # BlueJ files
 *.ctxt

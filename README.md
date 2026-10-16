@@ -1,5 +1,7 @@
 # K-Means
 
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+
 An interactive command-line implementation of the K-Means clustering algorithm
 (Lloyd's algorithm) in pure Java — no dependencies, no build system.
 
@@ -43,6 +45,15 @@ Run from the directory containing your CSV file:
 
 ```sh
 java -cp /path/to/out KMeans
+```
+
+A ready-to-use dataset ships in [`examples/data.csv`](examples/data.csv)
+(15 points in 3 obvious clusters). To try it:
+
+```sh
+cd examples
+java -cp ../out KMeans
+# file name: data · clusters: 3 · iterations: 100 · seed rows: 1, 6, 11
 ```
 
 The program then prompts for:
@@ -93,6 +104,12 @@ Console:
 | `src/KMeans.java`  | CLI prompts, CSV I/O, validation, and the clustering `Engine`  |
 | `src/DataPoint.java` | Immutable value type: row identifier + feature vector        |
 
+## Contributing
+
+Bug reports and pull requests are welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md). Please follow the
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## License
 
-Apache License 2.0 — see `LICENSE`.
+Apache License 2.0 — see [LICENSE](LICENSE).
