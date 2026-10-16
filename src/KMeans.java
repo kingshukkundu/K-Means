@@ -93,7 +93,7 @@ public class KMeans {
             try {
                 DatasetIO.writeClusters(outputPath, dataset, result.clusters(), false);
             } catch (FileAlreadyExistsException e) {
-                String warning = Files.isSameFile(inputPath, outputPath)
+                String warning = isSameFile(inputPath, outputPath)
                     ? "\nnew.csv is the input file; writing output will overwrite it."
                     : "\nAn existing new.csv will be overwritten.";
                 if (!confirm(sc, warning + " Overwrite? [y/N]: ")) {
@@ -145,13 +145,26 @@ public class KMeans {
         return answer.equalsIgnoreCase("y") || answer.equalsIgnoreCase("yes");
     }
 
+    // isSameFile throws if either path cannot be stat'ed (e.g. the input
+    // file was moved or deleted while the prompts were open); a failed
+    // comparison must fall back to the generic overwrite warning rather
+    // than abort the run after clustering has already completed.
+    private static boolean isSameFile(Path a, Path b) {
+        try {
+            return Files.isSameFile(a, b);
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
     // Rejects directory traversal plus every name that is unsafe on at
     // least one supported platform: \/:*?"<>| (Windows file/drive syntax),
     // control characters, Windows device names (matched on the portion
     // before the first dot, with surrounding whitespace stripped — Windows
     // ignores both when resolving names, so "con .csv" still hits CON),
-    // and names ending in a dot or space. Everything else — including
-    // non-ASCII names — is left to the filesystem to validate.
+    // and names ending in a dot. The input arrives trimmed from
+    // promptLine, so a trailing space cannot occur; everything else —
+    // including non-ASCII names — is left to the filesystem to validate.
     private static void validateFileName(String fileName) {
         if (fileName.isEmpty()) {
             throw new IllegalArgumentException("File name cannot be empty.");
@@ -162,8 +175,7 @@ public class KMeans {
         }
         int dot = fileName.indexOf('.');
         String baseName = dot >= 0 ? fileName.substring(0, dot) : fileName;
-        if (WINDOWS_DEVICE_NAME.matcher(baseName.trim()).matches()
-                || fileName.endsWith(".") || fileName.endsWith(" ")) {
+        if (WINDOWS_DEVICE_NAME.matcher(baseName.trim()).matches() || fileName.endsWith(".")) {
             throw new IllegalArgumentException(
                 "Invalid file name. Reserved or platform-incompatible names are not allowed.");
         }

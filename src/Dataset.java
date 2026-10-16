@@ -27,10 +27,10 @@ import java.util.Set;
  * instead of chasing per-point object references, and no feature value is
  * ever stored twice.
  *
- * Invariants are enforced at construction: identifiers must be non-blank
- * and unique, every row must have the same non-zero number of features,
- * and every feature value must be finite — so the clustering engine can
- * rely on finite input producing finite centroids.
+ * Invariants are enforced at construction: identifiers are trimmed,
+ * non-empty, and unique; every row has the same non-zero number of
+ * features; and every feature value is finite — so the clustering
+ * engine can rely on finite input producing finite centroids.
  */
 public final class Dataset {
 
@@ -47,8 +47,8 @@ public final class Dataset {
     /**
      * Creates a dataset from per-row identifiers and feature vectors.
      * Every row must have the same non-zero number of features, every
-     * feature value must be finite, and identifiers must be non-blank
-     * and unique.
+     * feature value must be finite, and identifiers are trimmed and
+     * must be non-empty and unique.
      */
     public static Dataset of(List<String> ids, List<double[]> rows) {
         if (ids == null || rows == null || ids.isEmpty() || ids.size() != rows.size()) {
@@ -59,8 +59,12 @@ public final class Dataset {
         String[] idArray = new String[ids.size()];
         Set<String> seenIds = new HashSet<>();
         for (int p = 0; p < ids.size(); p++) {
-            String id = ids.get(p);
-            if (id == null || id.trim().isEmpty()) {
+            String rawId = ids.get(p);
+            // Identifiers are normalized once at the boundary: what gets
+            // validated, deduplicated, stored, and written back out is always
+            // the same trimmed value, so "a" and " a" can never coexist.
+            String id = rawId == null ? null : rawId.trim();
+            if (id == null || id.isEmpty()) {
                 throw new IllegalArgumentException("Missing identifier at row " + (p + 1));
             }
             if (!seenIds.add(id)) {

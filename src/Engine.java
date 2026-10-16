@@ -82,12 +82,10 @@ final class Engine {
         }
         long startTime = System.nanoTime();
 
+        // Iteration 1 starts from the seed vectors, so a seed set that is
+        // already optimal converges in a single pass instead of two.
         seedCentroids();
-        assignAll();
-        reseedEmptyClusters();
-        recomputeCentroids();
-        int iterations = 1;
-
+        int iterations = 0;
         while (iterations < maxIterations) {
             double[][] previous = copyCentroids();
             assignAll();
