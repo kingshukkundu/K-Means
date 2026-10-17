@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Scanner;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 
 /**
@@ -36,27 +37,28 @@ public class KMeans {
 
     public static void main(String[] args) {
         try (Scanner sc = new Scanner(System.in)) {
-            String fileName = promptLine(sc, "Enter the name of the CSV file (with or without the .csv extension): ");
-            validateFileName(fileName);
+            String fileName;
+            while (true) {
+                fileName = promptLine(sc, "Enter the name of the CSV file (with or without the .csv extension): ");
+                try {
+                    validateFileName(fileName);
+                    break;
+                } catch (IllegalArgumentException e) {
+                    System.out.println(e.getMessage());
+                }
+            }
             // An explicit .csv extension is kept as typed; otherwise appended.
             Path inputPath = Paths.get(fileName.toLowerCase(Locale.ROOT).endsWith(".csv")
                 ? fileName
                 : fileName + ".csv");
             Dataset dataset = DatasetIO.readDataset(inputPath);
 
-            int numClusters = promptInt(sc, "Choose the number of clusters (>= 2): ");
-            if (numClusters < 2) {
-                throw new IllegalArgumentException("Number of clusters must be >= 2.");
-            }
-            if (numClusters > dataset.size()) {
-                throw new IllegalArgumentException(
-                    "Number of clusters cannot exceed dataset size (" + dataset.size() + ").");
-            }
+            int numClusters = promptInt(sc, "Choose the number of clusters (>= 2): ",
+                k -> k >= 2 && k <= dataset.size() ? null
+                    : "Number of clusters must be between 2 and " + dataset.size() + ".");
 
-            int maxIterations = promptInt(sc, "Please choose the maximum number of iterations: ");
-            if (maxIterations < 1) {
-                throw new IllegalArgumentException("Maximum iterations must be >= 1.");
-            }
+            int maxIterations = promptInt(sc, "Please choose the maximum number of iterations: ",
+                it -> it >= 1 ? null : "Maximum iterations must be >= 1.");
 
             System.out.println("\nPlease pick a row number between 1 and " + dataset.size() + " for each centroid.\n");
 
@@ -64,14 +66,12 @@ public class KMeans {
             List<Integer> seedIndices = new ArrayList<>();
             boolean[] seedUsed = new boolean[dataset.size()];
             for (int i = 1; i <= numClusters; i++) {
-                int row = promptInt(sc, "Centroid " + i + ": Pick the row number: ");
-                if (row < 1 || row > dataset.size()) {
-                    throw new IllegalArgumentException(
-                        "Row number must be between 1 and " + dataset.size() + ".");
-                }
-                if (seedUsed[row - 1]) {
-                    throw new IllegalArgumentException("Duplicate row number selected.");
-                }
+                int row = promptInt(sc, "Centroid " + i + ": Pick the row number: ", r -> {
+                    if (r < 1 || r > dataset.size()) {
+                        return "Row number must be between 1 and " + dataset.size() + ".";
+                    }
+                    return seedUsed[r - 1] ? "Row number already selected." : null;
+                });
                 seedUsed[row - 1] = true;
                 seedIndices.add(row - 1);
             }
@@ -133,19 +133,34 @@ public class KMeans {
         return sc.nextLine().trim();
     }
 
-    private static int promptInt(Scanner sc, String message) {
+    // Reprompts until the input parses and the validator accepts it; the
+    // validator returns the rejection message to show, or null when valid.
+    private static int promptInt(Scanner sc, String message, Function<Integer, String> validator) {
         while (true) {
             String input = promptLine(sc, message);
+            int value;
             try {
-                return Integer.parseInt(input);
+                value = Integer.parseInt(input);
             } catch (NumberFormatException e) {
                 System.out.println("Invalid input '" + input + "'. Please enter a valid integer.");
+                continue;
             }
+            String error = validator.apply(value);
+            if (error == null) {
+                return value;
+            }
+            System.out.println(error);
         }
     }
 
     private static boolean confirm(Scanner sc, String message) {
-        String answer = promptLine(sc, message);
+        System.out.print(message);
+        System.out.flush();
+        // EOF must decline — never auto-confirm an overwrite on absent input.
+        if (!sc.hasNextLine()) {
+            return false;
+        }
+        String answer = sc.nextLine().trim();
         return answer.equalsIgnoreCase("y") || answer.equalsIgnoreCase("yes");
     }
 

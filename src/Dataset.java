@@ -38,11 +38,11 @@ final class Dataset {
     // Used by the CSV reader: lineNumbers maps each row to its source line
     // so errors cite file lines, not data-row indexes.
     static Dataset of(List<String> ids, List<double[]> rows, int[] lineNumbers) {
-        if (ids == null || rows == null || ids.isEmpty() || ids.size() != rows.size()
-                || (lineNumbers != null && lineNumbers.length != ids.size())) {
+        if (ids == null || rows == null || lineNumbers == null || ids.isEmpty()
+                || ids.size() != rows.size() || lineNumbers.length != ids.size()) {
             throw new IllegalArgumentException(
-                "IDs and rows must be non-null, non-empty, and equal in size; "
-                    + "line numbers, when given, must match that size");
+                "IDs, rows, and line numbers must be non-null and equal in size; "
+                    + "IDs must be non-empty");
         }
 
         String[] idArray = new String[ids.size()];
@@ -98,34 +98,34 @@ final class Dataset {
     }
 
     private static String rowRef(int[] lineNumbers, int p) {
-        return lineNumbers == null ? "row " + (p + 1) : "line " + lineNumbers[p];
+        return "line " + lineNumbers[p];
     }
 
     /**
      * Number of data points.
      */
-    public int size() {
+    int size() {
         return ids.length;
     }
 
     /**
      * Number of features per point.
      */
-    public int dimensions() {
+    int dimensions() {
         return dimensions;
     }
 
     /**
      * Identifier of the given point.
      */
-    public String id(int point) {
+    String id(int point) {
         return ids[point];
     }
 
     /**
      * Feature {@code d} of the given point.
      */
-    public double feature(int point, int d) {
+    double feature(int point, int d) {
         return data[point * dimensions + d];
     }
 
