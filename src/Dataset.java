@@ -23,7 +23,7 @@ import java.util.Set;
  * matrix. Invariants (unique non-empty ids, uniform feature counts, finite
  * values) are enforced at construction.
  */
-public final class Dataset {
+final class Dataset {
 
     private final String[] ids;
     private final double[] data;
@@ -35,13 +35,8 @@ public final class Dataset {
         this.dimensions = dimensions;
     }
 
-    /** Creates a dataset from per-row identifiers and feature vectors. */
-    public static Dataset of(List<String> ids, List<double[]> rows) {
-        return of(ids, rows, null);
-    }
-
-    // Variant for the CSV reader: lineNumbers maps each row to its source
-    // line so errors cite file lines, not data-row indexes.
+    // Used by the CSV reader: lineNumbers maps each row to its source line
+    // so errors cite file lines, not data-row indexes.
     static Dataset of(List<String> ids, List<double[]> rows, int[] lineNumbers) {
         if (ids == null || rows == null || ids.isEmpty() || ids.size() != rows.size()
                 || (lineNumbers != null && lineNumbers.length != ids.size())) {

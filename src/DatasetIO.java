@@ -171,7 +171,9 @@ final class DatasetIO {
         for (int attempt = 0; attempt < 100; attempt++) {
             Path candidate = dir.resolve(prefix + UUID.randomUUID() + ".tmp");
             try {
-                return Files.createFile(candidate);
+                Path created = Files.createFile(candidate);
+                created.toFile().deleteOnExit();
+                return created;
             } catch (FileAlreadyExistsException e) {
                 // Generated name collided — try another.
             }

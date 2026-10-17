@@ -82,7 +82,8 @@ Console:
 - The final centroid of each cluster
 
 `new.csv` (written to the current directory; if it already exists — including
-when it is the input file — you are asked to confirm before it is overwritten):
+when it is the input file — you are asked to confirm before it is overwritten;
+declining exits with code 2 and writes nothing):
 
 - One row per data point: `cluster,id,feature1,feature2,...`
 - Identifiers are RFC 4180-quoted when they contain characters needing it,

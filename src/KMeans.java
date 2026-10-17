@@ -97,7 +97,9 @@ public class KMeans {
                     : "\nAn existing new.csv will be overwritten.";
                 if (!confirm(sc, warning + " Overwrite? [y/N]: ")) {
                     System.out.println("Output not written.");
-                    return;
+                    // Distinct from error exits: a caller can tell "ran but
+                    // wrote nothing" apart from success (0) or failure (1).
+                    System.exit(2);
                 }
                 DatasetIO.writeClusters(outputPath, dataset, result.clusters(), true);
             }
@@ -166,8 +168,10 @@ public class KMeans {
             throw new IllegalArgumentException(
                 "Invalid file name. Path separators and other unsafe characters are not allowed.");
         }
-        int dot = fileName.indexOf('.');
-        String baseName = dot >= 0 ? fileName.substring(0, dot) : fileName;
+        int stemStart = fileName.indexOf('.') == 0 ? 1 : 0;
+        int dot = fileName.indexOf('.', stemStart);
+        String baseName = dot >= 0 ? fileName.substring(stemStart, dot)
+            : fileName.substring(stemStart);
         String trimmedBase = baseName.trim();
         if (trimmedBase.isEmpty() || WINDOWS_DEVICE_NAME.matcher(trimmedBase).matches()
                 || fileName.endsWith(".") || !baseName.equals(trimmedBase)) {
