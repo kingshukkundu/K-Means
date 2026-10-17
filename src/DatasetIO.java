@@ -34,8 +34,8 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * CSV serialization for {@link Dataset}: reads the plain comma-separated
- * input format and writes cluster-grouped results with RFC 4180 escaping.
+ * CSV serialization for {@link Dataset}: reads records under RFC 4180
+ * quoting rules and writes cluster-grouped results with the same quoting.
  */
 final class DatasetIO {
 
@@ -47,63 +47,45 @@ final class DatasetIO {
         List<double[]> rows = new ArrayList<>();
         List<Integer> lineNumbers = new ArrayList<>();
         int expectedFeatureCount = -1;
-        int lineNumber = 0;
 
-        // Strict decoding: corrupt bytes must fail, not become U+FFFD in ids.
-        CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
-            .onMalformedInput(CodingErrorAction.REPORT)
-            .onUnmappableCharacter(CodingErrorAction.REPORT);
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(Files.newInputStream(path), decoder))) {
-            String rawLine;
-            while ((rawLine = reader.readLine()) != null) {
-                lineNumber++;
-                String line = rawLine.trim();
-                if (lineNumber == 1 && line.startsWith("\uFEFF")) {
-                    line = line.substring(1).trim();
-                }
-                if (line.isEmpty()) {
-                    continue;
-                }
-
-                String[] tokens = line.split(",", -1);
+        try (RecordReader records = new RecordReader(path)) {
+            List<String> fields;
+            while ((fields = records.next()) != null) {
+                int line = records.startLine();
                 boolean firstDataRow = expectedFeatureCount == -1;
                 if (firstDataRow) {
-                    if (tokens.length < 2) {
+                    if (fields.size() < 2) {
                         throw new IllegalArgumentException(
-                            "Line " + lineNumber + ": Expected at least 2 columns (ID + at least one feature), found " + tokens.length);
+                            "Line " + line + ": Expected at least 2 columns (ID + at least one feature), found " + fields.size());
                     }
-                    expectedFeatureCount = tokens.length - 1;
-                } else if (tokens.length != expectedFeatureCount + 1) {
+                    expectedFeatureCount = fields.size() - 1;
+                } else if (fields.size() != expectedFeatureCount + 1) {
                     throw new IllegalArgumentException(
-                        "Line " + lineNumber + ": Expected " + (expectedFeatureCount + 1)
-                            + " columns, found " + tokens.length + ". All rows must have the same number of columns.");
+                        "Line " + line + ": Expected " + (expectedFeatureCount + 1)
+                            + " columns, found " + fields.size() + ". All rows must have the same number of columns.");
                 }
 
                 double[] features = new double[expectedFeatureCount];
-                for (int i = 1; i < tokens.length; i++) {
+                for (int i = 1; i < fields.size(); i++) {
                     try {
                         // BigDecimal rejects hex floats, NaN/Infinity, and
                         // d/f suffixes that Double.parseDouble would accept.
-                        features[i - 1] = new BigDecimal(tokens[i].trim()).doubleValue();
+                        features[i - 1] = new BigDecimal(fields.get(i).trim()).doubleValue();
                     } catch (NumberFormatException e) {
                         throw new IllegalArgumentException(
-                            "Line " + lineNumber + ": Invalid numeric value"
+                            "Line " + line + ": Invalid numeric value"
                                 + (firstDataRow ? ". If the file has a header row, remove it first." : ""), e);
                     }
                 }
 
-                ids.add(tokens[0]);
+                ids.add(fields.get(0));
                 rows.add(features);
-                lineNumbers.add(lineNumber);
+                lineNumbers.add(line);
             }
         } catch (CharacterCodingException e) {
             throw new IOException("File is not valid UTF-8: " + path, e);
         }
 
-        if (lineNumber == 0) {
-            throw new IllegalArgumentException("CSV file is empty.");
-        }
         if (ids.isEmpty()) {
             throw new IllegalArgumentException("No valid data rows found in CSV file.");
         }
@@ -112,6 +94,139 @@ final class DatasetIO {
         // line of each row lets its errors cite real file lines.
         return Dataset.of(ids, rows,
             lineNumbers.stream().mapToInt(Integer::intValue).toArray());
+    }
+
+    private static final class RecordReader implements AutoCloseable {
+
+        private final BufferedReader reader;
+        private int pending = -2;
+        private int lineNumber;
+        private int recordStartLine;
+
+        RecordReader(Path path) throws IOException {
+            // Strict decoding: corrupt bytes must fail, not become U+FFFD.
+            CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT);
+            reader = new BufferedReader(
+                new InputStreamReader(Files.newInputStream(path), decoder));
+        }
+
+        // Single pass: the quote-state scan is the field splitter, so
+        // boundary detection and unescaping can never disagree.
+        List<String> next() throws IOException {
+            while (true) {
+                List<String> fields = new ArrayList<>();
+                StringBuilder field = new StringBuilder();
+                boolean inQuotes = false;
+                boolean fieldStart = true;
+                boolean afterQuote = false;
+                boolean blank = true;
+                boolean started = false;
+                while (true) {
+                    int c = read();
+                    if (c < 0) {
+                        if (!started) {
+                            return null;
+                        }
+                        if (inQuotes) {
+                            throw new IllegalArgumentException(
+                                "Unterminated quoted field in record starting at line "
+                                    + recordStartLine);
+                        }
+                        break;
+                    }
+                    if (!started) {
+                        // A BOM is only special as the very first byte of the file.
+                        if (lineNumber == 0 && c == '\uFEFF') {
+                            continue;
+                        }
+                        started = true;
+                        recordStartLine = lineNumber + 1;
+                    }
+                    if (inQuotes) {
+                        if (c == '"') {
+                            if (peek() == '"') {
+                                read();
+                                field.append('"');
+                            } else {
+                                inQuotes = false;
+                                afterQuote = true;
+                            }
+                        } else {
+                            field.append((char) c);
+                            if (c == '\r' || c == '\n') {
+                                // A break inside quotes is field data: count
+                                // the physical line but keep the raw bytes.
+                                if (c == '\r' && peek() == '\n') {
+                                    field.append((char) read());
+                                }
+                                lineNumber++;
+                            }
+                        }
+                    } else if (c == '\r' || c == '\n') {
+                        if (c == '\r' && peek() == '\n') {
+                            read();
+                        }
+                        lineNumber++;
+                        break;
+                    } else if (c == ',') {
+                        fields.add(field.toString());
+                        field.setLength(0);
+                        fieldStart = true;
+                        afterQuote = false;
+                        blank = false;
+                    } else if (afterQuote) {
+                        // Padding between a closing quote and the comma is
+                        // tolerated; anything else is malformed.
+                        if (!Character.isWhitespace(c)) {
+                            throw new IllegalArgumentException("Line " + recordStartLine
+                                + ": Unexpected character '" + (char) c + "' after closing quote");
+                        }
+                    } else {
+                        if (fieldStart && c == '"') {
+                            inQuotes = true;
+                            blank = false;
+                        } else {
+                            field.append((char) c);
+                            if (!Character.isWhitespace(c)) {
+                                blank = false;
+                            }
+                        }
+                        fieldStart = false;
+                    }
+                }
+                fields.add(field.toString());
+                if (!blank) {
+                    return fields;
+                }
+            }
+        }
+
+        private int read() throws IOException {
+            if (pending != -2) {
+                int c = pending;
+                pending = -2;
+                return c;
+            }
+            return reader.read();
+        }
+
+        private int peek() throws IOException {
+            if (pending == -2) {
+                pending = reader.read();
+            }
+            return pending;
+        }
+
+        int startLine() {
+            return recordStartLine;
+        }
+
+        @Override
+        public void close() throws IOException {
+            reader.close();
+        }
     }
 
     // Writes via a sibling temp file moved into place once complete, so a

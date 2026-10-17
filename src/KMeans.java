@@ -15,12 +15,10 @@
 // ============================================================================
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Locale;
 import java.util.Scanner;
 import java.util.function.Function;
@@ -35,6 +33,9 @@ public class KMeans {
     private static final Pattern WINDOWS_DEVICE_NAME =
         Pattern.compile("(?i)con|prn|aux|nul|com[1-9]|lpt[1-9]");
 
+    private static final int MAX_FILE_NAME_BYTES =
+        255 - ".clustered.csv".length() - (2 + 36 + ".tmp".length());
+
     public static void main(String[] args) {
         try (Scanner sc = new Scanner(System.in)) {
             String fileName;
@@ -48,10 +49,13 @@ public class KMeans {
                 }
             }
             // An explicit .csv extension is kept as typed; otherwise appended.
-            Path inputPath = Paths.get(fileName.toLowerCase(Locale.ROOT).endsWith(".csv")
-                ? fileName
-                : fileName + ".csv");
+            boolean hasCsvExtension = fileName.toLowerCase(Locale.ROOT).endsWith(".csv");
+            Path inputPath = Paths.get(hasCsvExtension ? fileName : fileName + ".csv");
             Dataset dataset = DatasetIO.readDataset(inputPath);
+            if (dataset.size() < 2) {
+                throw new IllegalArgumentException(
+                    "Dataset must contain at least 2 rows to form clusters.");
+            }
 
             int numClusters = promptInt(sc, "Choose the number of clusters (>= 2): ",
                 k -> k >= 2 && k <= dataset.size() ? null
@@ -60,23 +64,10 @@ public class KMeans {
             int maxIterations = promptInt(sc, "Please choose the maximum number of iterations: ",
                 it -> it >= 1 ? null : "Maximum iterations must be >= 1.");
 
-            System.out.println("\nPlease pick a row number between 1 and " + dataset.size() + " for each centroid.\n");
-
-            // Bitmap for O(1) duplicate-seed checks.
-            List<Integer> seedIndices = new ArrayList<>();
-            boolean[] seedUsed = new boolean[dataset.size()];
-            for (int i = 1; i <= numClusters; i++) {
-                int row = promptInt(sc, "Centroid " + i + ": Pick the row number: ", r -> {
-                    if (r < 1 || r > dataset.size()) {
-                        return "Row number must be between 1 and " + dataset.size() + ".";
-                    }
-                    return seedUsed[r - 1] ? "Row number already selected." : null;
-                });
-                seedUsed[row - 1] = true;
-                seedIndices.add(row - 1);
-            }
-
-            Engine.KMeansResult result = new Engine(dataset, seedIndices).run(maxIterations);
+            // Farthest-point seeding spreads initial centroids across the
+            // data deterministically, replacing manual seed selection.
+            Engine.KMeansResult result = new Engine(dataset,
+                Engine.farthestFirstSeeds(dataset, numClusters)).run(maxIterations);
 
             System.out.printf(Locale.ROOT, "%nClustering execution time: %.6f seconds%n", result.executionTimeSeconds());
             System.out.println("Total number of iterations: " + result.iterations());
@@ -88,14 +79,17 @@ public class KMeans {
                 printFeatures(centroids[i]);
             }
 
-            Path outputPath = Paths.get("new.csv");
+            // Derived from the input name, so the output can never be the
+            // input file and results from different datasets don't collide.
+            String outputName = (hasCsvExtension
+                ? fileName.substring(0, fileName.length() - ".csv".length())
+                : fileName) + ".clustered.csv";
+            Path outputPath = Paths.get(outputName);
             try {
                 DatasetIO.writeClusters(outputPath, dataset, result.clusters(), false);
             } catch (FileAlreadyExistsException e) {
-                String warning = isSameFile(inputPath, outputPath)
-                    ? "\nnew.csv is the input file; writing output will overwrite it."
-                    : "\nAn existing new.csv will be overwritten.";
-                if (!confirm(sc, warning + " Overwrite? [y/N]: ")) {
+                if (!confirm(sc, "\nAn existing " + outputName
+                        + " will be overwritten. Overwrite? [y/N]: ")) {
                     System.out.println("Output not written.");
                     // Distinct from error exits: a caller can tell "ran but
                     // wrote nothing" apart from success (0) or failure (1).
@@ -103,7 +97,7 @@ public class KMeans {
                 }
                 DatasetIO.writeClusters(outputPath, dataset, result.clusters(), true);
             }
-            System.out.println("\nClustered data written to new.csv");
+            System.out.println("\nClustered data written to " + outputName);
 
         } catch (IllegalArgumentException e) {
             System.err.println("Error: " + e.getMessage());
@@ -164,32 +158,28 @@ public class KMeans {
         return answer.equalsIgnoreCase("y") || answer.equalsIgnoreCase("yes");
     }
 
-    // A failed comparison falls back to the generic overwrite warning.
-    private static boolean isSameFile(Path a, Path b) {
-        try {
-            return Files.isSameFile(a, b);
-        } catch (IOException e) {
-            return false;
-        }
-    }
-
     // Rejects traversal and names unsafe on Windows: \/:*?"<>|, control
-    // chars, device names, trailing dots, and whitespace around the base name.
+    // chars, device names, whitespace around the base name, and leading or
+    // trailing dots (which produce hidden files or an empty stem, e.g.
+    // ".csv" names no file).
     private static void validateFileName(String fileName) {
         if (fileName.isEmpty()) {
             throw new IllegalArgumentException("File name cannot be empty.");
+        }
+        if (fileName.getBytes(StandardCharsets.UTF_8).length > MAX_FILE_NAME_BYTES) {
+            throw new IllegalArgumentException(
+                "File name is too long (maximum " + MAX_FILE_NAME_BYTES + " bytes).");
         }
         if (fileName.contains("..") || fileName.chars().anyMatch(KMeans::isIllegalFileNameChar)) {
             throw new IllegalArgumentException(
                 "Invalid file name. Path separators and other unsafe characters are not allowed.");
         }
-        int stemStart = fileName.indexOf('.') == 0 ? 1 : 0;
-        int dot = fileName.indexOf('.', stemStart);
-        String baseName = dot >= 0 ? fileName.substring(stemStart, dot)
-            : fileName.substring(stemStart);
+        int dot = fileName.indexOf('.');
+        String baseName = dot >= 0 ? fileName.substring(0, dot) : fileName;
         String trimmedBase = baseName.trim();
-        if (trimmedBase.isEmpty() || WINDOWS_DEVICE_NAME.matcher(trimmedBase).matches()
-                || fileName.endsWith(".") || !baseName.equals(trimmedBase)) {
+        if (fileName.startsWith(".") || fileName.endsWith(".")
+                || trimmedBase.isEmpty() || WINDOWS_DEVICE_NAME.matcher(trimmedBase).matches()
+                || !baseName.equals(trimmedBase)) {
             throw new IllegalArgumentException(
                 "Invalid file name. Reserved or platform-incompatible names are not allowed.");
         }

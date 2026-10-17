@@ -8,7 +8,8 @@ build/
 target/
 
 # Generated program output
-new.csv
+*.clustered.csv
+.*.clustered.csv.*.tmp
 
 # Log file
 *.log

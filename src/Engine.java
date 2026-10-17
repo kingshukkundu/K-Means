@@ -20,7 +20,8 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * K-Means engine: Lloyd's algorithm with farthest-point re-seeding.
+ * K-Means engine: Lloyd's algorithm over deterministic farthest-point
+ * initial seeds, with farthest-point re-seeding for empty clusters.
  * Performs no I/O; {@link #run(int)} is deterministic and repeatable.
  */
 final class Engine {
@@ -38,9 +39,10 @@ final class Engine {
     private final double[][] previousCentroids;
     private final int[] counts;
     private final int[] assignments;
+    private final double[] distanceScratch;
 
-    Engine(Dataset dataset, List<Integer> seedIndices) {
-        if (dataset == null || seedIndices == null || seedIndices.isEmpty()) {
+    Engine(Dataset dataset, int[] seedIndices) {
+        if (dataset == null || seedIndices == null || seedIndices.length == 0) {
             throw new IllegalArgumentException(
                 "Dataset must be non-null and at least one seed index is required");
         }
@@ -51,10 +53,10 @@ final class Engine {
         // Distinct in-range seeds imply k <= pointCount, which the
         // empty-cluster reseeding step relies on.
         boolean[] used = new boolean[pointCount];
-        seeds = new int[seedIndices.size()];
+        seeds = new int[seedIndices.length];
         for (int i = 0; i < seeds.length; i++) {
-            Integer row = seedIndices.get(i);
-            if (row == null || row < 0 || row >= pointCount) {
+            int row = seedIndices[i];
+            if (row < 0 || row >= pointCount) {
                 throw new IllegalArgumentException(
                     "Seed row index " + row + " is out of range for a dataset of " + pointCount + " rows");
             }
@@ -68,6 +70,72 @@ final class Engine {
         previousCentroids = new double[seeds.length][dimensions];
         counts = new int[seeds.length];
         assignments = new int[pointCount];
+        distanceScratch = new double[seeds.length];
+    }
+
+    /**
+     * Deterministic farthest-point (Gonzalez) seeding: the first seed is
+     * the point farthest from the dataset mean, and each subsequent seed
+     * is the point farthest from the seeds already chosen. Guarantees
+     * well-spread initial centroids without relying on the caller to pick
+     * them; the trade-off is sensitivity to outlier points.
+     */
+    static int[] farthestFirstSeeds(Dataset dataset, int k) {
+        if (dataset == null) {
+            throw new IllegalArgumentException("Dataset must be non-null");
+        }
+        int n = dataset.size();
+        if (k < 1 || k > n) {
+            throw new IllegalArgumentException(
+                "Seed count must be between 1 and " + n + " for this dataset");
+        }
+        int d = dataset.dimensions();
+
+        // Running mean — a convex combination that cannot overflow.
+        double[] mean = new double[d];
+        for (int p = 0; p < n; p++) {
+            double keep = (double) p / (p + 1);
+            double add = 1.0 / (p + 1);
+            for (int j = 0; j < d; j++) {
+                mean[j] = mean[j] * keep + dataset.feature(p, j) * add;
+            }
+        }
+
+        // Distance to the mean acts as the initial distance to a virtual
+        // seed, so the first pick is the point farthest from the center.
+        double[] minDist = new double[n];
+        for (int p = 0; p < n; p++) {
+            minDist[p] = squaredDistance(dataset, p, mean);
+        }
+
+        boolean[] picked = new boolean[n];
+        int[] result = new int[k];
+        double[] seedVector = new double[d];
+        for (int i = 0; i < k; i++) {
+            // Picked points are excluded so a zero-distance duplicate row
+            // can never be selected twice.
+            int farthest = -1;
+            double maxDist = -1;
+            for (int p = 0; p < n; p++) {
+                if (!picked[p] && minDist[p] > maxDist) {
+                    maxDist = minDist[p];
+                    farthest = p;
+                }
+            }
+            picked[farthest] = true;
+            result[i] = farthest;
+            dataset.copyFeaturesTo(farthest, seedVector, 0);
+            for (int p = 0; p < n; p++) {
+                if (picked[p]) {
+                    continue;
+                }
+                double dist = squaredDistance(dataset, p, seedVector);
+                if (dist < minDist[p]) {
+                    minDist[p] = dist;
+                }
+            }
+        }
+        return result;
     }
 
     KMeansResult run(int maxIterations) {
@@ -113,7 +181,23 @@ final class Engine {
     }
 
     private int nearestCentroid(int point) {
+        boolean allFinite = true;
+        for (int i = 0; i < centroids.length; i++) {
+            double dist = squaredDistance(dataset, point, centroids[i]);
+            distanceScratch[i] = dist;
+            if (dist == Double.POSITIVE_INFINITY) {
+                allFinite = false;
+            }
+        }
         int nearest = 0;
+        if (allFinite) {
+            for (int i = 1; i < distanceScratch.length; i++) {
+                if (distanceScratch[i] < distanceScratch[nearest]) {
+                    nearest = i;
+                }
+            }
+            return nearest;
+        }
         double minDist = distanceTo(point, centroids[0]);
         for (int i = 1; i < centroids.length; i++) {
             double dist = distanceTo(point, centroids[i]);
@@ -125,14 +209,20 @@ final class Engine {
         return nearest;
     }
 
+    // Sum of squared per-dimension deltas; saturates at +Inf on overflow.
+    private static double squaredDistance(Dataset dataset, int point, double[] vector) {
+        double sum = 0.0;
+        for (int d = 0; d < dataset.dimensions(); d++) {
+            double diff = dataset.feature(point, d) - vector[d];
+            sum += diff * diff;
+        }
+        return sum;
+    }
+
     // Euclidean distance: overflows fall back to a max-scaled form so
     // ordering stays correct; unrepresentable distances saturate at +Inf.
     private double distanceTo(int point, double[] centroid) {
-        double sum = 0.0;
-        for (int d = 0; d < dimensions; d++) {
-            double diff = dataset.feature(point, d) - centroid[d];
-            sum += diff * diff;
-        }
+        double sum = squaredDistance(dataset, point, centroid);
         if (sum < Double.POSITIVE_INFINITY) {
             return Math.sqrt(sum);
         }
@@ -154,8 +244,9 @@ final class Engine {
         return maxAbs * Math.sqrt(scaled);
     }
 
-    // Re-seeds each empty cluster with the point farthest from its current
-    // centroid; donor clusters must keep at least 1 member.
+    // Re-seeds each empty cluster with the point farthest from its own
+    // (donor) cluster's centroid — the worst-served point in the data;
+    // donor clusters must keep at least 1 member.
     private void reseedEmptyClusters() {
         for (int i = 0; i < centroids.length; i++) {
             if (counts[i] != 0) {

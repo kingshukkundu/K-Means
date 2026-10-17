@@ -6,7 +6,7 @@ An interactive command-line implementation of the K-Means clustering algorithm
 (Lloyd's algorithm) in pure Java — no dependencies, no build system.
 
 It reads a numeric dataset from a CSV file, partitions it into *k* clusters, and
-writes the grouped result to `new.csv`.
+writes the grouped result to `<name>.clustered.csv`.
 
 ## Requirements
 
@@ -14,7 +14,7 @@ writes the grouped result to `new.csv`.
 
 ## Input format
 
-The input is a plain CSV file with **no header row**:
+The input is a CSV file with **no header row**:
 
 - **Column 1** — an identifier for the row (a row number or any unique string).
   It must be unique, is carried through to the output, and is never used in
@@ -22,10 +22,11 @@ The input is a plain CSV file with **no header row**:
 - **Columns 2…n** — numeric features. Every row must have the same number of
   columns, and there must be at least one feature column.
 
-Blank lines and a UTF-8 BOM are ignored. Only plain decimal and scientific
-notation is accepted — non-finite values (`NaN`, `Infinity`), hex floats, type
-suffixes (`1.5d`, `2f`), and ragged rows are rejected with a line-numbered
-error message.
+Standard RFC 4180 quoting is supported: a field wrapped in double quotes may
+contain commas, newlines, and escaped quotes (`""`). Blank lines and a UTF-8
+BOM are ignored. Only plain decimal and scientific notation is accepted —
+non-finite values (`NaN`, `Infinity`), hex floats, type suffixes (`1.5d`,
+`2f`), and ragged rows are rejected with a line-numbered error message.
 
 Example `data.csv`:
 
@@ -56,7 +57,7 @@ A ready-to-use dataset ships in [`examples/data.csv`](examples/data.csv)
 ```sh
 cd examples
 java -cp ../out KMeans
-# file name: data · clusters: 3 · iterations: 100 · seed rows: 1, 6, 11
+# file name: data · clusters: 3 · iterations: 100
 ```
 
 The program then prompts for:
@@ -65,13 +66,13 @@ The program then prompts for:
    filenames that are unsafe on any supported platform (`..`, `/`, `\`,
    `:`, `?`, `*`, `"`, `<`, `>`, `|`, control characters, Windows device
    names such as `CON`/`NUL`/`COM1`, trailing dots or spaces) are rejected
-   for safety.
+   for safety. Names are also capped so the derived `<name>.clustered.csv`
+   output (and its staging temp file) always fits filesystem limits.
 2. **Number of clusters** — between 2 and the number of data rows.
 3. **Maximum iterations** — an upper bound; the algorithm may stop earlier.
-4. **Initial centroid rows** — one distinct row number per cluster. Picking
-   rows from visibly different regions of the data gives better results;
-   identical or poorly spread seeds can converge to a weaker local optimum
-   (an inherent property of K-Means, not a bug).
+
+Initial centroids are chosen automatically by deterministic farthest-point
+seeding (see *How it works*), so no seed rows are requested.
 
 ## Output
 
@@ -81,9 +82,10 @@ Console:
 - Number of iterations actually run
 - The final centroid of each cluster
 
-`new.csv` (written to the current directory; if it already exists — including
-when it is the input file — you are asked to confirm before it is overwritten;
-declining exits with code 2 and writes nothing):
+`<name>.clustered.csv` (written to the current directory, named after the
+input — `data.csv` produces `data.clustered.csv`; if it already exists you
+are asked to confirm before it is overwritten, and declining exits with
+code 2 and writes nothing):
 
 - One row per data point: `cluster,id,feature1,feature2,...`
 - Identifiers are RFC 4180-quoted when they contain characters needing it,
@@ -91,26 +93,32 @@ declining exits with code 2 and writes nothing):
   or `@` is prefixed with `'` so spreadsheet applications treat it as text
   instead of a formula.
 - Each cluster's rows are grouped together, separated by blank lines
-- `new.csv` is a report, not re-ingestable input — the writer quotes and
-  escapes identifiers, while the reader expects plain unquoted CSV
+- The output is a report, not directly reusable as input — it has a leading
+  cluster-number column the input format does not expect
 
 ## How it works
 
 - **Algorithm** — classic Lloyd's algorithm: assign each point to its nearest
   centroid, recompute each centroid as the mean of its members, repeat.
+- **Deterministic seeding** — initial centroids are picked by farthest-point
+  (Gonzalez) seeding: the first seed is the point farthest from the dataset
+  mean, and each subsequent seed is the point farthest from the seeds already
+  chosen. Runs are reproducible and do not depend on lucky or well-informed
+  seed picks, though outlier points may be selected as seeds.
 - **Flat data layout** — `Dataset` stores all features in a single row-major
   `double[]` (one source of truth, no per-point copies), so the hot loop reads
   memory sequentially instead of chasing object references.
-- **Overflow-safe distances** — Euclidean distances are evaluated with a
-  fast squared-sum path that falls back to a max-scaled form when the sum
-  would overflow, so ordering stays correct for finite input of any
-  magnitude.
+- **Fast distance ordering** — nearest-centroid comparisons use squared
+  distances (a monotone transform, so ordering matches Euclidean) and skip
+  the square root entirely; only if a squared distance overflows are exact
+  distances computed, via a max-scaled form that keeps ordering correct for
+  finite input of any magnitude.
 - **Overflow-safe centroids** — each centroid is refined as a running mean
   over its members (`mean·(n−1)/n + x/n`), a convex combination that stays
   finite for any finite input where a plain sum could overflow.
 - **Empty-cluster reseeding** — if a cluster loses all its points, it is
-  re-seeded with the point farthest from its current centroid rather than
-  being dropped or crashed on.
+  re-seeded with the worst-served point in the data (the point farthest from
+  its assigned cluster's centroid) rather than being dropped or crashed on.
 - **Convergence** — stops early when every centroid coordinate moves less than
   a relative tolerance of `1e-6`, or when the iteration cap is hit.
 
