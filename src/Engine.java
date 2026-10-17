@@ -138,6 +138,14 @@ final class Engine {
         return result;
     }
 
+    /**
+     * Runs Lloyd's algorithm until every centroid moves less than the
+     * relative {@link #CONVERGENCE_TOLERANCE} or {@code maxIterations}
+     * passes complete. The returned centroids are always the exact means
+     * of the returned clusters; membership is decided against the
+     * centroids of the preceding pass, so the two agree to within the
+     * convergence tolerance rather than bit-exactly.
+     */
     KMeansResult run(int maxIterations) {
         if (maxIterations < 1) {
             throw new IllegalArgumentException("Maximum iterations must be >= 1");

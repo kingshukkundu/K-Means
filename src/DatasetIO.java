@@ -30,6 +30,7 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
@@ -45,7 +46,7 @@ final class DatasetIO {
     static Dataset readDataset(Path path) throws IOException {
         List<String> ids = new ArrayList<>();
         List<double[]> rows = new ArrayList<>();
-        List<Integer> lineNumbers = new ArrayList<>();
+        int[] lineNumbers = new int[16];
         int expectedFeatureCount = -1;
 
         try (RecordReader records = new RecordReader(path)) {
@@ -80,7 +81,10 @@ final class DatasetIO {
 
                 ids.add(fields.get(0));
                 rows.add(features);
-                lineNumbers.add(line);
+                if (ids.size() > lineNumbers.length) {
+                    lineNumbers = Arrays.copyOf(lineNumbers, lineNumbers.length * 2);
+                }
+                lineNumbers[ids.size() - 1] = line;
             }
         } catch (CharacterCodingException e) {
             throw new IOException("File is not valid UTF-8: " + path, e);
@@ -92,8 +96,7 @@ final class DatasetIO {
 
         // Dataset.of enforces all data invariants in one place; the source
         // line of each row lets its errors cite real file lines.
-        return Dataset.of(ids, rows,
-            lineNumbers.stream().mapToInt(Integer::intValue).toArray());
+        return Dataset.of(ids, rows, Arrays.copyOf(lineNumbers, ids.size()));
     }
 
     private static final class RecordReader implements AutoCloseable {
@@ -286,9 +289,7 @@ final class DatasetIO {
         for (int attempt = 0; attempt < 100; attempt++) {
             Path candidate = dir.resolve(prefix + UUID.randomUUID() + ".tmp");
             try {
-                Path created = Files.createFile(candidate);
-                created.toFile().deleteOnExit();
-                return created;
+                return Files.createFile(candidate);
             } catch (FileAlreadyExistsException e) {
                 // Generated name collided — try another.
             }
